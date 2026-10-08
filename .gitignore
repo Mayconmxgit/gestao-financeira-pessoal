@@ -1,0 +1,35 @@
+# Configuracoes e credenciais locais
+.env
+.env.*
+!.env.example
+
+# Dependencias e artefatos gerados
+node_modules/
+vendor/
+.next/
+dist/
+build/
+coverage/
+bin/
+obj/
+backup/
+backups/
+publicado*/
+*.tsbuildinfo
+*.exe
+*.dll
+*.pdb
+
+# Arquivos locais de execucao e publicacao
+artifacts/
+tmp/
+*.tar.gz
+*.zip
+*.log
+
+# IDE e sistema operacional
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
