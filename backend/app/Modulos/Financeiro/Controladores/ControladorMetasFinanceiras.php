@@ -3,6 +3,7 @@
 namespace App\Modulos\Financeiro\Controladores;
 
 use App\Http\Controllers\Controller;
+use App\Modulos\Financeiro\Planejamento\ServicoAportesMetas;
 use App\Modulos\Financeiro\Suporte\EntradaFinanceira as Entrada;
 use App\Modulos\Financeiro\Suporte\IdentificadorPublico;
 use Illuminate\Http\JsonResponse;
@@ -57,28 +58,16 @@ final class ControladorMetasFinanceiras extends Controller
         return response()->json($this->encontrar($usuario, $id));
     }
 
-    public function aportar(Request $requisicao, int $id): JsonResponse
+    public function aportar(Request $requisicao, int $id, ServicoAportesMetas $servico): JsonResponse
     {
         $usuario = Entrada::usuario($requisicao);
         $dados = Entrada::validar($requisicao, [
+            'conta_id' => ['required', 'integer', 'min:1'],
             'valor' => Entrada::valorValido(), 'data' => ['required', 'date_format:Y-m-d'],
             'observacao' => ['nullable', 'string', 'max:300'],
         ]);
         $this->validarValor($dados['valor']);
-        DB::transaction(function () use ($usuario, $id, $dados): void {
-            $meta = DB::table('metas_financeiras')->where('usuario_id', $usuario)->where('id', $id)->lockForUpdate()->first();
-            abort_if($meta === null, 404);
-            abort_unless($meta->situacao !== 'pausada', 409);
-            $aporte = DB::table('aportes_metas')->insertGetId([
-                'uuid' => IdentificadorPublico::novo(),
-                'usuario_id' => $usuario, 'meta_id' => $id, 'valor' => Entrada::moeda($dados['valor']),
-                'data' => $dados['data'], 'observacao' => isset($dados['observacao']) ? trim($dados['observacao']) : null,
-                'created_at' => now(), 'updated_at' => now(),
-            ]);
-            $situacao = bccomp($this->totalAportes($usuario, $id), (string) $meta->valor_objetivo, 2) >= 0 ? 'concluida' : 'ativa';
-            DB::table('metas_financeiras')->where('id', $id)->update(['situacao' => $situacao, 'updated_at' => now()]);
-            Entrada::auditar($usuario, 'aporte_meta_registrado', 'metas_financeiras', $id, ['aporte_id' => $aporte]);
-        });
+        $servico->registrar($usuario, $id, $dados);
 
         return response()->json(['meta' => $this->encontrar($usuario, $id)], 201);
     }
@@ -89,8 +78,11 @@ final class ControladorMetasFinanceiras extends Controller
         $metas = DB::table('metas_financeiras')->where('usuario_id', $usuario)
             ->orderByRaw("CASE situacao WHEN 'ativa' THEN 0 WHEN 'pausada' THEN 1 ELSE 2 END")
             ->orderBy('prazo')->orderByDesc('id')->get();
-        $aportes = DB::table('aportes_metas')->where('usuario_id', $usuario)
-            ->whereIn('meta_id', $metas->pluck('id'))->orderByDesc('data')->orderByDesc('id')->get()->groupBy('meta_id');
+        $aportes = DB::table('aportes_metas as aporte')
+            ->leftJoin('contas as conta', 'conta.id', '=', 'aporte.conta_id')
+            ->where('aporte.usuario_id', $usuario)->whereIn('aporte.meta_id', $metas->pluck('id'))
+            ->select('aporte.*', 'conta.nome as conta_nome', 'conta.instituicao as conta_instituicao')
+            ->orderByDesc('aporte.data')->orderByDesc('aporte.id')->get()->groupBy('meta_id');
 
         return $metas->map(fn (object $meta): array => $this->apresentar($meta, $aportes->get($meta->id, collect())))->values();
     }

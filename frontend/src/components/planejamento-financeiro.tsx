@@ -80,7 +80,7 @@ function FormularioPagamentoRecorrente({ pagamento, concluir }: { pagamento: Pag
   </form>;
 }
 
-export function MetasFinanceiras() {
+export function MetasFinanceiras({ contas }: { contas: Conta[] }) {
   const lista = useDados<{ dados: MetaFinanceira[] }>("financeiro/metas-financeiras");
   const [editando, definirEditando] = useState<MetaFinanceira | null | undefined>(undefined);
   const [aportando, definirAportando] = useState<MetaFinanceira | null>(null);
@@ -91,12 +91,12 @@ export function MetasFinanceiras() {
       {lista.dados?.dados.length ? <div className="planejamento-grade">{lista.dados.dados.map((meta) => <article className="planejamento-item" key={meta.id}>
         <div className="planejamento-item-topo"><span className="planejamento-icone"><PiggyBank size={20} /></span><div><strong>{meta.nome}</strong><small>{meta.prazo ? `Prazo: ${formatarData(meta.prazo)}` : "Sem prazo definido"}</small></div><span className={`etiqueta situacao-${meta.situacao}`}>{situacoesMeta[meta.situacao]}</span></div>
         <div className="meta-progresso"><div><strong>{formatarMoeda(meta.valor_acumulado, "BRL")}</strong><span>de {formatarMoeda(meta.valor_objetivo, "BRL")}</span><b>{Number(meta.percentual_concluido).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%</b></div><progress max="100" value={Math.min(Number(meta.percentual_concluido), 100)} /></div>
-        {meta.aportes[0] && <p>Último aporte: <b>{formatarMoeda(meta.aportes[0].valor, "BRL")}</b> em {formatarData(meta.aportes[0].data)}</p>}
+        {meta.aportes[0] && <p>Último aporte: <b>{formatarMoeda(meta.aportes[0].valor, "BRL")}</b> em {formatarData(meta.aportes[0].data)}{meta.aportes[0].conta_nome ? ` · ${meta.aportes[0].conta_nome}` : ""}</p>}
         <div className="acoes-linha"><Botao variante="secundario" onClick={() => definirEditando(meta)}><Pencil size={16} /> Editar</Botao>{meta.situacao === "ativa" && <Botao onClick={() => definirAportando(meta)}><Plus size={16} /> Registrar aporte</Botao>}</div>
       </article>)}</div> : !lista.carregando && <Vazio titulo="Nenhuma meta financeira" descricao="Crie uma meta para reserva, viagem, compra ou outro objetivo." />}
     </Cartao>
     {editando !== undefined && <Modal titulo={editando ? "Editar meta financeira" : "Nova meta financeira"} fechar={() => definirEditando(undefined)}><FormularioMeta meta={editando ?? undefined} concluir={() => { definirEditando(undefined); lista.recarregar(); }} /></Modal>}
-    {aportando && <Modal titulo="Registrar aporte" fechar={() => definirAportando(null)}><FormularioAporte meta={aportando} concluir={() => { definirAportando(null); lista.recarregar(); }} /></Modal>}
+    {aportando && <Modal titulo="Registrar aporte" fechar={() => definirAportando(null)}><FormularioAporte meta={aportando} contas={contas} concluir={() => { definirAportando(null); lista.recarregar(); }} /></Modal>}
   </>;
 }
 
@@ -117,16 +117,19 @@ function FormularioMeta({ meta, concluir }: { meta?: MetaFinanceira; concluir: (
   </form>;
 }
 
-function FormularioAporte({ meta, concluir }: { meta: MetaFinanceira; concluir: () => void }) {
+function FormularioAporte({ meta, contas, concluir }: { meta: MetaFinanceira; contas: Conta[]; concluir: () => void }) {
+  const contasValidas = contas.filter((conta) => conta.situacao === "ativa" && conta.moeda === "BRL" && conta.tipo !== "cartao_credito");
+  const [contaId, definirContaId] = useState("");
   const [valor, definirValor] = useState(""); const [data, definirData] = useState(dataHojeLocal());
   const [observacao, definirObservacao] = useState(""); const [estado, definirEstado] = useState({ erro: "", enviando: false });
   async function enviar(evento: FormEvent) {
     evento.preventDefault(); definirEstado({ erro: "", enviando: true });
-    try { await api(`financeiro/metas-financeiras/${meta.id}/aportes`, { method: "POST", body: JSON.stringify({ valor, data, observacao: observacao || null }) }); concluir(); }
+    try { await api(`financeiro/metas-financeiras/${meta.id}/aportes`, { method: "POST", body: JSON.stringify({ conta_id: contaId, valor, data, observacao: observacao || null }) }); concluir(); }
     catch (falha) { definirEstado({ erro: mensagemErro(falha), enviando: false }); }
   }
-  return <form className="formulario-grade" onSubmit={enviar}><Aviso tipo="info">O aporte atualiza somente o progresso da meta e não altera o saldo bancário.</Aviso>{estado.erro && <Aviso>{estado.erro}</Aviso>}
+  return <form className="formulario-grade" onSubmit={enviar}><Aviso tipo="info">O aporte será retirado da conta selecionada e reduzirá o saldo geral.</Aviso>{estado.erro && <Aviso>{estado.erro}</Aviso>}
     <div className="resumo-formulario"><strong>{meta.nome}</strong><span>{formatarMoeda(meta.valor_acumulado, "BRL")} de {formatarMoeda(meta.valor_objetivo, "BRL")}</span></div>
+    <Seletor rotulo="Banco / conta de origem" required value={contaId} onChange={(e) => definirContaId(e.target.value)}><option value="">Selecione</option>{contasValidas.map((conta) => <option key={conta.id} value={conta.id}>{conta.instituicao ? `${conta.instituicao} · ` : ""}{conta.nome}</option>)}</Seletor>
     <div className="formulario-duas-colunas"><Campo rotulo="Valor do aporte" type="number" min="0.01" step="0.01" required value={valor} onChange={(e) => definirValor(e.target.value)} /><Campo rotulo="Data" type="date" required value={data} onChange={(e) => definirData(e.target.value)} /></div>
     <Campo rotulo="Observação (opcional)" maxLength={300} value={observacao} onChange={(e) => definirObservacao(e.target.value)} />
     <div className="modal-acoes"><Botao type="submit" carregando={estado.enviando}>Registrar aporte</Botao></div>

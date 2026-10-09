@@ -86,14 +86,17 @@ final class PlanejamentoFinanceiroTeste extends TestCase
     public function test_meta_em_reais_calcula_progresso_e_pode_ser_editada(): void
     {
         $token = $this->autenticar('meta@exemplo.test');
+        $conta = $this->conta($token, 'Conta principal', 'BRL', 'Banco Exemplo');
         $id = $this->withToken($token)->postJson('/api/v1/metas-financeiras', [
             'nome' => 'Reserva de emergência', 'valor_objetivo' => '5000.00', 'prazo' => '2027-12-31',
         ])->assertCreated()->assertJsonPath('moeda', 'BRL')->json('id');
 
         $this->withToken($token)->postJson("/api/v1/metas-financeiras/$id/aportes", [
-            'valor' => '1250.00', 'data' => '2026-09-24', 'observacao' => 'Primeiro aporte',
+            'conta_id' => $conta, 'valor' => '1250.00', 'data' => '2026-09-24', 'observacao' => 'Primeiro aporte',
         ])->assertCreated()->assertJsonPath('meta.valor_acumulado', '1250.00')
-            ->assertJsonPath('meta.percentual_concluido', '25.00');
+            ->assertJsonPath('meta.percentual_concluido', '25.00')
+            ->assertJsonPath('meta.aportes.0.conta_nome', 'Conta principal')
+            ->assertJsonPath('meta.aportes.0.conta_instituicao', 'Banco Exemplo');
 
         $this->withToken($token)->patchJson("/api/v1/metas-financeiras/$id", [
             'nome' => 'Reserva financeira', 'valor_objetivo' => '2500.00',
@@ -103,7 +106,36 @@ final class PlanejamentoFinanceiroTeste extends TestCase
 
         $this->withToken($token)->getJson('/api/v1/metas-financeiras')
             ->assertOk()->assertJsonCount(1, 'dados')->assertJsonPath('dados.0.moeda', 'BRL')
-            ->assertJsonPath('dados.0.aportes.0.observacao', 'Primeiro aporte');
+            ->assertJsonPath('dados.0.aportes.0.observacao', 'Primeiro aporte')
+            ->assertJsonPath('dados.0.aportes.0.conta_id', $conta);
+        $this->assertDatabaseHas('transacoes', [
+            'usuario_id' => $this->usuarioId($token), 'valor' => '-1250.00', 'natureza' => 'ajuste',
+            'situacao' => 'confirmada', 'descricao_original' => 'Aporte para meta: Reserva de emergência',
+        ]);
+        $transacao = (int) DB::table('transacoes')->where('descricao_original', 'Aporte para meta: Reserva de emergência')->value('id');
+        $contaInterna = (int) DB::table('contas')->where('uuid', $conta)->value('id');
+        $this->assertDatabaseHas('aportes_metas', ['conta_id' => $contaInterna, 'transacao_id' => $transacao]);
+        $this->withToken($token)->getJson('/api/v1/resumo?inicio=2026-09-01&fim=2026-09-30&moeda=BRL')
+            ->assertOk()->assertJsonPath('consolidado.saldo_final', '-250.00');
+    }
+
+    public function test_aporte_exige_conta_ativa_em_reais_do_usuario(): void
+    {
+        $dono = $this->autenticar('dono-meta@exemplo.test');
+        $outro = $this->autenticar('outro-meta@exemplo.test');
+        $contaOutro = $this->conta($outro, 'Banco de outra pessoa');
+        $contaDolar = $this->conta($dono, 'Conta em dólar', 'USD');
+        $meta = $this->withToken($dono)->postJson('/api/v1/metas-financeiras', [
+            'nome' => 'Viagem', 'valor_objetivo' => '3000.00', 'prazo' => null,
+        ])->assertCreated()->json('id');
+
+        $dados = ['valor' => '100.00', 'data' => '2026-09-24', 'observacao' => null];
+        $this->withToken($dono)->postJson("/api/v1/metas-financeiras/$meta/aportes", $dados + ['conta_id' => $contaOutro])
+            ->assertUnprocessable()->assertJsonPath('erros.conta_id.0', 'O identificador informado é inválido.');
+        $this->withToken($dono)->postJson("/api/v1/metas-financeiras/$meta/aportes", $dados + ['conta_id' => $contaDolar])
+            ->assertUnprocessable()->assertJsonPath('erros.conta_id.0', 'Selecione uma conta ativa em reais que não seja cartão de crédito.');
+
+        $this->assertDatabaseCount('aportes_metas', 0);
         $this->assertDatabaseCount('transacoes', 0);
     }
 
@@ -176,10 +208,11 @@ final class PlanejamentoFinanceiroTeste extends TestCase
         return (int) Usuario::query()->where('uuid', $uuid)->value('id');
     }
 
-    private function conta(string $token, string $nome, string $moeda = 'BRL'): string
+    private function conta(string $token, string $nome, string $moeda = 'BRL', ?string $instituicao = null): string
     {
         return $this->withToken($token)->postJson('/api/v1/contas', [
-            'nome' => $nome, 'tipo' => 'corrente', 'moeda' => $moeda, 'saldo_inicial' => '1000.00',
+            'nome' => $nome, 'tipo' => 'corrente', 'moeda' => $moeda,
+            'saldo_inicial' => '1000.00', 'instituicao' => $instituicao,
         ])->assertCreated()->json('id');
     }
 

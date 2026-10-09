@@ -46,7 +46,8 @@ export type PagamentoRecorrente = {
 };
 
 export type AporteMeta = {
-  id: string; valor: string; data: string; observacao: string | null;
+  id: string; conta_id: string | null; transacao_id: string | null; valor: string; data: string;
+  observacao: string | null; conta_nome: string | null; conta_instituicao: string | null;
 };
 
 export type MetaFinanceira = {
