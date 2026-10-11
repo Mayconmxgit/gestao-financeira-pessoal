@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { CalendarCheck, Check, Pencil, PiggyBank, Plus, Target } from "lucide-react";
+import { CalendarCheck, Check, CreditCard, Pencil, PiggyBank, Plus, Target } from "lucide-react";
 import { api } from "@/lib/api";
 import { dataHojeLocal, formatarData, formatarMoeda, mensagemErro } from "@/lib/formatacao";
 import type { Categoria, Conta, MetaFinanceira, PagamentoRecorrente } from "@/lib/tipos";
@@ -11,6 +11,7 @@ import { Aviso, Botao, Campo, Cartao, Modal, Seletor, Vazio } from "@/components
 const periodicidades = { semanal: "Semanal", mensal: "Mensal", anual: "Anual" } as const;
 const situacoesRecorrencia = { ativo: "Ativo", pausado: "Pausado", encerrado: "Encerrado" } as const;
 const situacoesMeta = { ativa: "Ativa", pausada: "Pausada", concluida: "Concluída" } as const;
+const formasPagamento = { debito: "Débito", cartao_credito: "Cartão de crédito" } as const;
 
 export function PagamentosRecorrentes({ contas, categorias }: { contas: Conta[]; categorias: Categoria[] }) {
   const lista = useDados<{ dados: PagamentoRecorrente[] }>("financeiro/pagamentos-recorrentes");
@@ -21,10 +22,10 @@ export function PagamentosRecorrentes({ contas, categorias }: { contas: Conta[];
     {lista.erro && <Aviso>{lista.erro}</Aviso>}
     <Cartao><div className="cartao-cabecalho"><div><h2>Pagamentos recorrentes</h2><p>Planeje gastos frequentes sem alterar o saldo antes do pagamento.</p></div><Botao onClick={() => definirEditando(null)}><Plus size={17} /> Novo pagamento</Botao></div>
       {lista.dados?.dados.length ? <div className="planejamento-grade">{lista.dados.dados.map((item) => <article className="planejamento-item" key={item.id}>
-        <div className="planejamento-item-topo"><span className="planejamento-icone"><CalendarCheck size={20} /></span><div><strong>{item.descricao}</strong><small>{item.conta_nome} · {item.categoria_nome ?? "A classificar"}</small></div><span className={`etiqueta situacao-${item.situacao}`}>{situacoesRecorrencia[item.situacao]}</span></div>
+        <div className="planejamento-item-topo"><span className="planejamento-icone"><CalendarCheck size={20} /></span><div><strong>{item.descricao}</strong><small>{formasPagamento[item.forma_pagamento]} · {item.conta_nome} · {item.categoria_nome ?? "A classificar"}</small></div><span className={`etiqueta situacao-${item.situacao}`}>{situacoesRecorrencia[item.situacao]}</span></div>
         <div className="planejamento-valores"><strong>{formatarMoeda(item.valor, "BRL")}</strong><span>{periodicidades[item.periodicidade]}</span></div>
         <p>Próximo vencimento: <b>{formatarData(item.proximo_vencimento)}</b>{item.data_fim ? ` · até ${formatarData(item.data_fim)}` : ""}</p>
-        <div className="acoes-linha"><Botao variante="secundario" onClick={() => definirEditando(item)}><Pencil size={16} /> Editar</Botao>{item.situacao === "ativo" && item.proximo_vencimento && <Botao onClick={() => definirPagando(item)}><Check size={16} /> Marcar como pago</Botao>}</div>
+        <div className="acoes-linha">{item.forma_pagamento === "cartao_credito" && <Botao variante="secundario" onClick={() => definirEditando(item)}><CreditCard size={16} /> {item.cobranca_automatica ? "Cartão automático" : "Cartão manual"}</Botao>}<Botao variante="secundario" onClick={() => definirEditando(item)}><Pencil size={16} /> Editar</Botao>{item.situacao === "ativo" && item.proximo_vencimento && <Botao onClick={() => definirPagando(item)}><Check size={16} /> Marcar como pago</Botao>}</div>
       </article>)}</div> : !lista.carregando && <Vazio titulo="Nenhum pagamento recorrente" descricao="Cadastre aluguel, internet, assinaturas ou outros gastos frequentes." />}
     </Cartao>
     {editando !== undefined && <Modal titulo={editando ? "Editar pagamento recorrente" : "Novo pagamento recorrente"} fechar={() => definirEditando(undefined)}><FormularioRecorrencia pagamento={editando ?? undefined} contas={contas} categorias={categorias} concluir={() => { definirEditando(undefined); lista.recarregar(); }} /></Modal>}
@@ -34,6 +35,8 @@ export function PagamentosRecorrentes({ contas, categorias }: { contas: Conta[];
 
 function FormularioRecorrencia({ pagamento, contas, categorias, concluir }: { pagamento?: PagamentoRecorrente; contas: Conta[]; categorias: Categoria[]; concluir: () => void }) {
   const [contaId, definirConta] = useState(pagamento ? String(pagamento.conta_id) : "");
+  const [formaPagamento, definirFormaPagamento] = useState<PagamentoRecorrente["forma_pagamento"]>(pagamento?.forma_pagamento ?? "debito");
+  const [cobrancaAutomatica, definirCobrancaAutomatica] = useState(Boolean(pagamento?.cobranca_automatica));
   const [categoriaId, definirCategoria] = useState(pagamento?.categoria_id ? String(pagamento.categoria_id) : "");
   const [descricao, definirDescricao] = useState(pagamento?.descricao ?? "");
   const [valor, definirValor] = useState(pagamento?.valor ?? "");
@@ -42,20 +45,33 @@ function FormularioRecorrencia({ pagamento, contas, categorias, concluir }: { pa
   const [dataFim, definirDataFim] = useState(pagamento?.data_fim ?? "");
   const [situacao, definirSituacao] = useState(pagamento?.situacao === "pausado" ? "pausado" : "ativo");
   const [estado, definirEstado] = useState({ erro: "", enviando: false });
-  const contasBrl = contas.filter((conta) => conta.moeda === "BRL" && (conta.situacao === "ativa" || conta.id === pagamento?.conta_id));
+  const contasCompativeis = contas.filter((conta) => {
+    const formaConta = conta.tipo === "cartao_credito" ? "cartao_credito" : "debito";
+    return conta.moeda === "BRL" && formaConta === formaPagamento && (conta.situacao === "ativa" || conta.id === pagamento?.conta_id);
+  });
+
+  function alterarFormaPagamento(novaForma: PagamentoRecorrente["forma_pagamento"]) {
+    definirFormaPagamento(novaForma);
+    if (novaForma === "debito") definirCobrancaAutomatica(false);
+    const contaAtual = contas.find((conta) => conta.id === contaId);
+    const formaContaAtual = contaAtual?.tipo === "cartao_credito" ? "cartao_credito" : "debito";
+    if (contaAtual && formaContaAtual !== novaForma) definirConta("");
+  }
 
   async function enviar(evento: FormEvent) {
     evento.preventDefault(); definirEstado({ erro: "", enviando: true });
     try {
-      const comum = { conta_id: contaId, categoria_id: categoriaId || null, descricao, valor, periodicidade, data_fim: dataFim || null };
+      const comum = { conta_id: contaId, forma_pagamento: formaPagamento, cobranca_automatica: cobrancaAutomatica, categoria_id: categoriaId || null, descricao, valor, periodicidade, data_fim: dataFim || null };
       const corpo = pagamento ? { ...comum, proximo_vencimento: vencimento, situacao } : { ...comum, primeiro_vencimento: vencimento };
       await api(pagamento ? `financeiro/pagamentos-recorrentes/${pagamento.id}` : "financeiro/pagamentos-recorrentes", { method: pagamento ? "PATCH" : "POST", body: JSON.stringify(corpo) });
       concluir();
     } catch (falha) { definirEstado({ erro: mensagemErro(falha), enviando: false }); }
   }
 
-  return <form className="formulario-grade" onSubmit={enviar}><Aviso tipo="info">Valores previstos não alteram o saldo. A saída será criada somente quando o pagamento for confirmado.</Aviso>{estado.erro && <Aviso>{estado.erro}</Aviso>}
-    <Seletor rotulo="Conta em reais" required value={contaId} onChange={(e) => definirConta(e.target.value)}><option value="">Selecione</option>{contasBrl.map((conta) => <option key={conta.id} value={conta.id}>{conta.nome}</option>)}</Seletor>
+  return <form className="formulario-grade" onSubmit={enviar}><Aviso tipo="info">Valores previstos não alteram o saldo. O lançamento será criado na confirmação ou automaticamente no vencimento, quando essa opção estiver ativa no cartão.</Aviso>{estado.erro && <Aviso>{estado.erro}</Aviso>}
+    <div className="campo"><span>Forma de pagamento</span><div className="alternador-historico" role="group" aria-label="Forma de pagamento"><button type="button" className={formaPagamento === "debito" ? "ativa" : ""} aria-pressed={formaPagamento === "debito"} onClick={() => alterarFormaPagamento("debito")}>Débito</button><button type="button" className={formaPagamento === "cartao_credito" ? "ativa" : ""} aria-pressed={formaPagamento === "cartao_credito"} onClick={() => alterarFormaPagamento("cartao_credito")}><CreditCard size={15} /> Cartão de crédito</button></div></div>
+    <Seletor rotulo={formaPagamento === "cartao_credito" ? "Cartão de crédito" : "Conta em reais"} required value={contaId} onChange={(e) => definirConta(e.target.value)}><option value="">Selecione</option>{contasCompativeis.map((conta) => <option key={conta.id} value={conta.id}>{conta.nome}</option>)}</Seletor>
+    {formaPagamento === "cartao_credito" && <label className="opcao-saldo"><input type="checkbox" checked={cobrancaAutomatica} onChange={(e) => definirCobrancaAutomatica(e.target.checked)} /><span><strong>Cobrar automaticamente no vencimento</strong><small>Na data prevista, a compra será lançada no histórico do cartão e o próximo vencimento será calculado.</small></span></label>}
     <Campo rotulo="Descrição" required minLength={2} maxLength={500} value={descricao} onChange={(e) => definirDescricao(e.target.value)} placeholder="Ex.: Aluguel" />
     <div className="formulario-duas-colunas"><Campo rotulo="Valor em reais" type="number" min="0.01" step="0.01" required value={valor} onChange={(e) => definirValor(e.target.value)} /><Seletor rotulo="Frequência" value={periodicidade} onChange={(e) => definirPeriodicidade(e.target.value as PagamentoRecorrente["periodicidade"])}>{Object.entries(periodicidades).map(([valorOpcao, nome]) => <option key={valorOpcao} value={valorOpcao}>{nome}</option>)}</Seletor></div>
     <div className="formulario-duas-colunas"><Campo rotulo={pagamento ? "Próximo vencimento" : "Primeiro vencimento"} type="date" required value={vencimento} onChange={(e) => definirVencimento(e.target.value)} /><Campo rotulo="Encerrar em (opcional)" type="date" min={vencimento} value={dataFim} onChange={(e) => definirDataFim(e.target.value)} /></div>
@@ -73,7 +89,7 @@ function FormularioPagamentoRecorrente({ pagamento, concluir }: { pagamento: Pag
     try { await api(`financeiro/pagamentos-recorrentes/${pagamento.id}/pagamentos`, { method: "POST", body: JSON.stringify({ data }) }); concluir(); }
     catch (falha) { definirEstado({ erro: mensagemErro(falha), enviando: false }); }
   }
-  return <form className="formulario-grade" onSubmit={enviar}><Aviso tipo="info">Esta confirmação criará uma saída de {formatarMoeda(pagamento.valor, "BRL")} e atualizará o saldo da conta.</Aviso>{estado.erro && <Aviso>{estado.erro}</Aviso>}
+  return <form className="formulario-grade" onSubmit={enviar}><Aviso tipo="info">Esta confirmação criará {pagamento.forma_pagamento === "cartao_credito" ? "uma compra no cartão" : "uma saída em débito"} de {formatarMoeda(pagamento.valor, "BRL")}.</Aviso>{estado.erro && <Aviso>{estado.erro}</Aviso>}
     <div className="resumo-formulario"><strong>{pagamento.descricao}</strong><span>Vence em {formatarData(pagamento.proximo_vencimento)}</span></div>
     <Campo rotulo="Data do pagamento" type="date" required value={data} onChange={(e) => definirData(e.target.value)} />
     <div className="modal-acoes"><Botao type="submit" carregando={estado.enviando}>Confirmar pagamento</Botao></div>

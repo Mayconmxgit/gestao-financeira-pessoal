@@ -17,6 +17,7 @@ final class EmprestimosTeste extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        CarbonImmutable::setTestNow('2026-09-23 12:00:00');
         config()->set('autenticacao.segredo', base64_encode(random_bytes(32)));
     }
 

@@ -239,6 +239,31 @@ final class FinanceiroPessoalTeste extends TestCase
             ->assertUnprocessable();
     }
 
+    public function test_historico_separa_lancamentos_em_debito_e_cartao_de_credito(): void
+    {
+        $token = $this->autenticar('historico-forma-pagamento@exemplo.test');
+        $conta = $this->conta($token, 'Conta corrente');
+        $cartao = $this->conta($token, 'Cartão principal', 'cartao_credito');
+
+        $this->withToken($token)->postJson('/api/v1/transacoes', [
+            'conta_id' => $conta, 'data' => '2026-09-20', 'valor' => '-80.00',
+            'descricao' => 'Pagamento no débito', 'natureza' => 'saida',
+        ])->assertCreated();
+        $this->withToken($token)->postJson('/api/v1/transacoes', [
+            'conta_id' => $cartao, 'data' => '2026-09-20', 'valor' => '-120.00',
+            'descricao' => 'Pagamento no cartão', 'natureza' => 'compra_cartao',
+        ])->assertCreated();
+
+        $this->withToken($token)->getJson('/api/v1/transacoes?forma_pagamento=debito')
+            ->assertOk()->assertJsonCount(1, 'dados')
+            ->assertJsonPath('dados.0.descricao_original', 'Pagamento no débito');
+        $this->withToken($token)->getJson('/api/v1/transacoes?forma_pagamento=cartao_credito')
+            ->assertOk()->assertJsonCount(1, 'dados')
+            ->assertJsonPath('dados.0.descricao_original', 'Pagamento no cartão');
+        $this->withToken($token)->getJson('/api/v1/transacoes?forma_pagamento=dinheiro')
+            ->assertUnprocessable();
+    }
+
     public function test_historico_ordena_por_data_e_preserva_desempate_na_paginacao(): void
     {
         $token = $this->autenticar('historico-por-data@exemplo.test');

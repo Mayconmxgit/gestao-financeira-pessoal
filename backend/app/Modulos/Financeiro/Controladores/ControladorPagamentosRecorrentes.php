@@ -21,8 +21,10 @@ final class ControladorPagamentosRecorrentes extends Controller
             ->leftJoin('categorias as categoria', 'categoria.id', '=', 'pagamento.categoria_id')
             ->where('pagamento.usuario_id', $usuario)
             ->select('pagamento.*', 'conta.nome as conta_nome', 'categoria.nome as categoria_nome')
+            ->selectRaw("CASE WHEN conta.tipo = 'cartao_credito' THEN 'cartao_credito' ELSE 'debito' END as forma_pagamento")
             ->orderByRaw("CASE pagamento.situacao WHEN 'ativo' THEN 0 WHEN 'pausado' THEN 1 ELSE 2 END")
             ->orderBy('pagamento.proximo_vencimento')->get()->values();
+        $dados->each(fn (object $pagamento) => $pagamento->cobranca_automatica = (bool) $pagamento->cobranca_automatica);
 
         return response()->json(['dados' => $dados]);
     }
@@ -43,7 +45,7 @@ final class ControladorPagamentosRecorrentes extends Controller
             return $id;
         });
 
-        return response()->json(DB::table('pagamentos_recorrentes')->find($id), 201);
+        return response()->json($this->buscar($id), 201);
     }
 
     public function atualizar(Request $requisicao, int $id): JsonResponse
@@ -61,7 +63,7 @@ final class ControladorPagamentosRecorrentes extends Controller
             Entrada::auditar($usuario, 'pagamento_recorrente_editado', 'pagamentos_recorrentes', $id);
         });
 
-        return response()->json(DB::table('pagamentos_recorrentes')->find($id));
+        return response()->json($this->buscar($id));
     }
 
     public function pagar(Request $requisicao, int $id, ServicoPagamentosRecorrentes $servico): JsonResponse
@@ -79,6 +81,13 @@ final class ControladorPagamentosRecorrentes extends Controller
             throw ValidationException::withMessages(['conta_id' => 'Selecione uma conta em reais.']);
         }
         abort_unless($conta->situacao === 'ativa', 409);
+        $formaPagamento = $conta->tipo === 'cartao_credito' ? 'cartao_credito' : 'debito';
+        if (isset($dados['forma_pagamento']) && $dados['forma_pagamento'] !== $formaPagamento) {
+            throw ValidationException::withMessages(['conta_id' => 'Selecione uma conta compatível com a forma de pagamento.']);
+        }
+        if (($dados['cobranca_automatica'] ?? false) && $formaPagamento !== 'cartao_credito') {
+            throw ValidationException::withMessages(['cobranca_automatica' => 'A cobrança automática está disponível apenas para cartão de crédito.']);
+        }
         Entrada::categoria($usuario, $dados['categoria_id'] ?? null);
         if (($dados['categoria_id'] ?? null) !== null && DB::table('categorias')->where('id', $dados['categoria_id'])->value('tipo') !== 'despesa') {
             throw ValidationException::withMessages(['categoria_id' => 'Use uma categoria de despesa.']);
@@ -91,6 +100,7 @@ final class ControladorPagamentosRecorrentes extends Controller
             'conta_id' => $conta->id, 'categoria_id' => $dados['categoria_id'] ?? null,
             'descricao' => trim($dados['descricao']), 'valor' => Entrada::moeda($dados['valor']), 'moeda' => 'BRL',
             'periodicidade' => $dados['periodicidade'], 'proximo_vencimento' => $vencimento, 'data_fim' => $dados['data_fim'] ?? null,
+            'cobranca_automatica' => (bool) ($dados['cobranca_automatica'] ?? false),
         ];
     }
 
@@ -120,6 +130,21 @@ final class ControladorPagamentosRecorrentes extends Controller
             'conta_id' => ['required', 'integer', 'min:1'], 'categoria_id' => ['nullable', 'integer', 'min:1'],
             'descricao' => ['required', 'string', 'min:2', 'max:500'], 'valor' => Entrada::valorValido(),
             'periodicidade' => ['required', 'in:semanal,mensal,anual'],
+            'forma_pagamento' => ['sometimes', 'in:debito,cartao_credito'],
+            'cobranca_automatica' => ['sometimes', 'boolean'],
         ];
+    }
+
+    private function buscar(int $id): object
+    {
+        $pagamento = DB::table('pagamentos_recorrentes as pagamento')
+            ->join('contas as conta', 'conta.id', '=', 'pagamento.conta_id')
+            ->where('pagamento.id', $id)
+            ->select('pagamento.*')
+            ->selectRaw("CASE WHEN conta.tipo = 'cartao_credito' THEN 'cartao_credito' ELSE 'debito' END as forma_pagamento")
+            ->first();
+        $pagamento->cobranca_automatica = (bool) $pagamento->cobranca_automatica;
+
+        return $pagamento;
     }
 }

@@ -41,6 +41,8 @@ export type Transacao = {
 export type PagamentoRecorrente = {
   id: string; conta_id: string; categoria_id: string | null; descricao: string; valor: string;
   moeda: "BRL"; periodicidade: "semanal" | "mensal" | "anual";
+  forma_pagamento: "debito" | "cartao_credito";
+  cobranca_automatica: boolean;
   primeiro_vencimento: string; proximo_vencimento: string | null; data_fim: string | null;
   situacao: "ativo" | "pausado" | "encerrado"; conta_nome: string; categoria_nome: string | null;
 };

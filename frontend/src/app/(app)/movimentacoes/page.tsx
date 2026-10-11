@@ -16,7 +16,7 @@ type Acao = "lancamento" | "edicao" | "transferencia" | "estorno" | "contraparti
 type PaginaTransacoes = { dados: Transacao[]; proximo_cursor: string | null };
 type FiltrosHistorico = {
   inicio: string; fim: string; contaId: string; busca: string;
-  categoria: string; natureza: string; origem: string;
+  categoria: string; natureza: string; origem: string; formaPagamento: "debito" | "cartao_credito";
 };
 
 const nomesOrigem: Record<string, string> = {
@@ -33,6 +33,7 @@ function montarConsulta(filtros: FiltrosHistorico) {
   else if (filtros.categoria) parametros.set("categoria_id", filtros.categoria);
   if (filtros.natureza) parametros.set("natureza", filtros.natureza);
   if (filtros.origem) parametros.set("origem", filtros.origem);
+  parametros.set("forma_pagamento", filtros.formaPagamento);
 
   return `financeiro/transacoes?${parametros.toString()}`;
 }
@@ -49,6 +50,7 @@ export default function Movimentacoes() {
   const [categoriaFiltro, definirCategoriaFiltro] = useState("");
   const [naturezaFiltro, definirNaturezaFiltro] = useState("");
   const [origemFiltro, definirOrigemFiltro] = useState("");
+  const [formaPagamento, definirFormaPagamento] = useState<"debito" | "cartao_credito">("debito");
   const [aba, definirAba] = useState<"movimentacoes" | "recorrentes" | "metas" | "categorias">("movimentacoes");
   const [acao, definirAcao] = useState<Acao>(null);
   const [selecionada, selecionar] = useState<Transacao | null>(null);
@@ -58,11 +60,14 @@ export default function Movimentacoes() {
   const [carregandoMais, definirCarregandoMais] = useState(false);
   const contas = useDados<{ dados: Conta[] }>("financeiro/contas");
   const categorias = useDados<{ dados: Categoria[] }>("financeiro/categorias");
-  const consulta = montarConsulta({ inicio, fim, contaId, busca, categoria: categoriaFiltro, natureza: naturezaFiltro, origem: origemFiltro });
+  const consulta = montarConsulta({ inicio, fim, contaId, busca, categoria: categoriaFiltro, natureza: naturezaFiltro, origem: origemFiltro, formaPagamento });
   const pagina = useDados<PaginaTransacoes>(consulta);
   const extras = continuacao?.consulta === consulta ? continuacao.extras : [];
   const proximo = continuacao?.consulta === consulta ? continuacao.cursor : pagina.dados?.proximo_cursor;
   const registros = [...(pagina.dados?.dados ?? []), ...extras];
+  const contasHistorico = contas.dados?.dados.filter((conta) =>
+    formaPagamento === "cartao_credito" ? conta.tipo === "cartao_credito" : conta.tipo !== "cartao_credito",
+  ) ?? [];
 
   async function carregarMais() {
     if (!proximo) return;
@@ -87,6 +92,9 @@ export default function Movimentacoes() {
     definirInicio(periodo.inicio); definirFim(periodo.fim); definirContaId(""); definirBusca("");
     definirCategoriaFiltro(""); definirNaturezaFiltro(""); definirOrigemFiltro(""); definirContinuacao(null);
   }
+  function alterarFormaPagamento(novaForma: "debito" | "cartao_credito") {
+    definirFormaPagamento(novaForma); definirContaId(""); definirContinuacao(null);
+  }
   async function classificar(transacao: Transacao, categoriaId: string) {
     definirErro("");
     try { await api(`financeiro/transacoes/${transacao.id}/classificacao`, { method: "PATCH", body: JSON.stringify({ categoria_id: categoriaId || null }) }); definirContinuacao(null); pagina.recarregar(); }
@@ -107,13 +115,13 @@ export default function Movimentacoes() {
         <label>Pesquisar <input type="search" value={busca} onChange={(e) => definirBusca(e.target.value)} placeholder="Descrição da movimentação" /></label>
         <label>De <input type="date" value={inicio} onChange={(e) => definirInicio(e.target.value)} /></label>
         <label>Até <input type="date" value={fim} min={inicio} onChange={(e) => definirFim(e.target.value)} /></label>
-        <label>Conta <select value={contaId} onChange={(e) => definirContaId(e.target.value)}><option value="">Todas as contas</option>{contas.dados?.dados.map((conta) => <option key={conta.id} value={conta.id}>{conta.nome}</option>)}</select></label>
+        <label>Conta <select value={contaId} onChange={(e) => definirContaId(e.target.value)}><option value="">Todas as contas</option>{contasHistorico.map((conta) => <option key={conta.id} value={conta.id}>{conta.nome}</option>)}</select></label>
         <label>Categoria <select value={categoriaFiltro} onChange={(e) => definirCategoriaFiltro(e.target.value)}><option value="">Todas as categorias</option><option value="sem_categoria">Sem categoria</option>{categorias.dados?.dados.map((categoria) => <option key={categoria.id} value={categoria.id}>{categoria.nome}</option>)}</select></label>
         <label>Tipo <select value={naturezaFiltro} onChange={(e) => definirNaturezaFiltro(e.target.value)}><option value="">Todos os tipos</option>{Object.entries(nomesNatureza).map(([valor, nome]) => <option key={valor} value={valor}>{nome}</option>)}</select></label>
         <label>Origem <select value={origemFiltro} onChange={(e) => definirOrigemFiltro(e.target.value)}><option value="">Todas as origens</option>{Object.entries(nomesOrigem).map(([valor, nome]) => <option key={valor} value={valor}>{nome}</option>)}</select></label>
         <Botao type="button" variante="texto" onClick={limparFiltros}><X size={16} /> Limpar filtros</Botao>
       </div>
-        <Cartao className="tabela-cartao"><div className="cartao-cabecalho"><div><h2>Histórico</h2><p>{registros.length} {registros.length === 1 ? "movimentação carregada" : "movimentações carregadas"}</p></div></div>
+        <Cartao className="tabela-cartao"><div className="cartao-cabecalho"><div><h2>Histórico</h2><p>{registros.length} {registros.length === 1 ? "movimentação carregada" : "movimentações carregadas"}</p></div><div className="alternador-historico" role="group" aria-label="Tipo de histórico"><button type="button" className={formaPagamento === "debito" ? "ativa" : ""} onClick={() => alterarFormaPagamento("debito")}>Débito</button><button type="button" className={formaPagamento === "cartao_credito" ? "ativa" : ""} onClick={() => alterarFormaPagamento("cartao_credito")}>Cartão de crédito</button></div></div>
           {registros.length ? <div className="tabela-rolagem"><table className="tabela"><thead><tr><th>Movimentação</th><th>Conta</th><th>Categoria</th><th>Data</th><th>Valor</th><th>Ações</th></tr></thead><tbody>{registros.map((item) => {
             const conta = contas.dados?.dados.find((c) => c.id === item.conta_id);
             const tipoCategoria = Number(item.valor) > 0 ? "receita" : "despesa";

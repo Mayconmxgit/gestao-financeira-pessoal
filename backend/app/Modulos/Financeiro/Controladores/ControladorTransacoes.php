@@ -52,6 +52,7 @@ final class ControladorTransacoes extends Controller
             'apos' => ['sometimes', 'integer', 'min:0'],
             'ordem' => ['sometimes', 'in:asc,desc'],
             'moeda' => ['sometimes', 'string', 'size:3', 'regex:/^[A-Z]{3}$/'],
+            'forma_pagamento' => ['sometimes', 'in:debito,cartao_credito'],
         ]);
     }
 
@@ -89,6 +90,15 @@ final class ControladorTransacoes extends Controller
             if (isset($dados[$campo])) {
                 $consulta->where($campo, $dados[$campo]);
             }
+        }
+        if (isset($dados['forma_pagamento'])) {
+            $tipoConta = $dados['forma_pagamento'] === 'cartao_credito' ? '=' : '<>';
+            $consulta->whereExists(function (Builder $contas) use ($usuario, $tipoConta): void {
+                $contas->selectRaw('1')->from('contas')
+                    ->whereColumn('contas.id', 'transacoes.conta_id')
+                    ->where('contas.usuario_id', $usuario)
+                    ->where('contas.tipo', $tipoConta, 'cartao_credito');
+            });
         }
         foreach (['inicio' => '>=', 'fim' => '<='] as $campo => $operador) {
             if (isset($dados[$campo])) {

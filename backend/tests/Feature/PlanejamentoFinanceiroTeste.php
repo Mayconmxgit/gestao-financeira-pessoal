@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Modulos\Financeiro\Planejamento\ServicoPagamentosRecorrentes;
 use App\Modulos\Usuarios\Modelos\Usuario;
 use App\Modulos\Usuarios\Servicos\ServicoToken;
 use Carbon\CarbonImmutable;
@@ -81,6 +82,58 @@ final class PlanejamentoFinanceiroTeste extends TestCase
             ->assertNotFound();
         $this->withToken($dono)->postJson('/api/v1/pagamentos-recorrentes', $this->dadosRecorrencia($dolar))
             ->assertUnprocessable()->assertJsonPath('erros.conta_id.0', 'Selecione uma conta em reais.');
+    }
+
+    public function test_recorrencia_define_cobranca_no_cartao_e_cria_compra_no_historico(): void
+    {
+        $token = $this->autenticar('recorrencia-cartao@exemplo.test');
+        $contaDebito = $this->conta($token, 'Conta corrente');
+        $cartao = $this->conta($token, 'Cartão principal', 'BRL', null, 'cartao_credito');
+
+        $dados = $this->dadosRecorrencia($cartao) + ['forma_pagamento' => 'cartao_credito'];
+        $id = $this->withToken($token)->postJson('/api/v1/pagamentos-recorrentes', $dados)
+            ->assertCreated()->assertJsonPath('forma_pagamento', 'cartao_credito')->json('id');
+
+        $this->withToken($token)->getJson('/api/v1/pagamentos-recorrentes')
+            ->assertOk()->assertJsonPath('dados.0.forma_pagamento', 'cartao_credito');
+        $this->withToken($token)->postJson("/api/v1/pagamentos-recorrentes/$id/pagamentos", [
+            'data' => '2026-10-10',
+        ])->assertCreated()->assertJsonPath('transacao.natureza', 'compra_cartao');
+
+        $this->withToken($token)->postJson('/api/v1/pagamentos-recorrentes',
+            $this->dadosRecorrencia($contaDebito) + ['forma_pagamento' => 'cartao_credito'])
+            ->assertUnprocessable()
+            ->assertJsonPath('erros.conta_id.0', 'Selecione uma conta compatível com a forma de pagamento.');
+    }
+
+    public function test_cobranca_automatica_lanca_no_cartao_uma_unica_vez_na_data_prevista(): void
+    {
+        CarbonImmutable::setTestNow('2026-10-10 08:00:00');
+        $token = $this->autenticar('recorrencia-automatica@exemplo.test');
+        $cartao = $this->conta($token, 'Cartão automático', 'BRL', null, 'cartao_credito');
+        $dados = $this->dadosRecorrencia($cartao) + [
+            'forma_pagamento' => 'cartao_credito', 'cobranca_automatica' => true,
+        ];
+
+        $this->withToken($token)->postJson('/api/v1/pagamentos-recorrentes', $dados)
+            ->assertCreated()->assertJsonPath('cobranca_automatica', true);
+        $servico = app(ServicoPagamentosRecorrentes::class);
+
+        $this->assertSame(1, $servico->processarAutomaticas('2026-10-10'));
+        $this->assertSame(0, $servico->processarAutomaticas('2026-10-10'));
+        $this->assertDatabaseCount('transacoes', 1);
+        $this->assertDatabaseCount('execucoes_pagamentos_recorrentes', 1);
+        $this->assertDatabaseHas('transacoes', [
+            'descricao_original' => 'Internet', 'data_efetiva' => '2026-10-10',
+            'valor' => '-120.00', 'natureza' => 'compra_cartao',
+        ]);
+        $this->assertDatabaseHas('pagamentos_recorrentes', ['proximo_vencimento' => '2026-11-10']);
+
+        $conta = $this->conta($token, 'Conta manual');
+        $this->withToken($token)->postJson('/api/v1/pagamentos-recorrentes',
+            $this->dadosRecorrencia($conta) + ['forma_pagamento' => 'debito', 'cobranca_automatica' => true])
+            ->assertUnprocessable()
+            ->assertJsonPath('erros.cobranca_automatica.0', 'A cobrança automática está disponível apenas para cartão de crédito.');
     }
 
     public function test_meta_em_reais_calcula_progresso_e_pode_ser_editada(): void
@@ -208,10 +261,10 @@ final class PlanejamentoFinanceiroTeste extends TestCase
         return (int) Usuario::query()->where('uuid', $uuid)->value('id');
     }
 
-    private function conta(string $token, string $nome, string $moeda = 'BRL', ?string $instituicao = null): string
+    private function conta(string $token, string $nome, string $moeda = 'BRL', ?string $instituicao = null, string $tipo = 'corrente'): string
     {
         return $this->withToken($token)->postJson('/api/v1/contas', [
-            'nome' => $nome, 'tipo' => 'corrente', 'moeda' => $moeda,
+            'nome' => $nome, 'tipo' => $tipo, 'moeda' => $moeda,
             'saldo_inicial' => '1000.00', 'instituicao' => $instituicao,
         ])->assertCreated()->json('id');
     }
