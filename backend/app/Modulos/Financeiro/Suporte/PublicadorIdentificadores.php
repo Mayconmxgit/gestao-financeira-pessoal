@@ -14,6 +14,7 @@ final class PublicadorIdentificadores
         'transacao_principal_id' => 'transacoes', 'transacao_encargos_id' => 'transacoes',
         'transacao_pagamento_id' => 'transacoes', 'pagamento_recorrente_id' => 'pagamentos_recorrentes',
         'meta_id' => 'metas_financeiras', 'emprestimo_id' => 'emprestimos', 'parcela_id' => 'parcelas_emprestimo',
+        'cartao_id' => 'contas', 'fatura_cartao_id' => 'faturas_cartao', 'fatura_id' => 'faturas_cartao',
     ];
 
     private const CONTEXTOS = [
@@ -23,6 +24,8 @@ final class PublicadorIdentificadores
         'contrapartida' => 'transacoes', 'pagamento' => 'pagamentos_recorrentes',
         'meta' => 'metas_financeiras', 'aportes' => 'aportes_metas', 'emprestimo' => 'emprestimos',
         'parcelas' => 'parcelas_emprestimo', 'proxima_parcela' => 'parcelas_emprestimo',
+        'faturas' => 'faturas_cartao',
+        'fatura' => 'faturas_cartao', 'fatura_atual' => 'faturas_cartao',
     ];
 
     public function __construct(private readonly IdentificadorPublico $identificadores) {}

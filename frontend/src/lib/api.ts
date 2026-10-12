@@ -4,6 +4,7 @@ export class ErroApi extends Error {
     public readonly status: number,
     public readonly codigo?: string,
     public readonly campos?: Record<string, string[]>,
+    public readonly detalhes?: Record<string, unknown>,
   ) { super(mensagem); }
 }
 
@@ -28,7 +29,7 @@ export async function api<T>(caminho: string, opcoes: RequestInit = {}): Promise
       if (/^admin(?:-auth)?\//.test(caminho)) window.dispatchEvent(new Event("sessao-admin-expirada"));
       else if (caminho !== "auth/eu") window.dispatchEvent(new Event("sessao-expirada"));
     }
-    throw new ErroApi(mensagem, resposta.status, dados.codigo, dados.erros);
+    throw new ErroApi(mensagem, resposta.status, dados.codigo, dados.erros, dados as Record<string, unknown>);
   }
   return resposta.json() as Promise<T>;
 }

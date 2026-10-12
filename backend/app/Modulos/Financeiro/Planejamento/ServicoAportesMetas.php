@@ -2,6 +2,7 @@
 
 namespace App\Modulos\Financeiro\Planejamento;
 
+use App\Modulos\Financeiro\Suporte\CodigoMovimentacao as Codigo;
 use App\Modulos\Financeiro\Suporte\EntradaFinanceira as Entrada;
 use App\Modulos\Financeiro\Suporte\IdentidadeTransacao as Identidade;
 use App\Modulos\Financeiro\Suporte\IdentificadorPublico;
@@ -67,7 +68,7 @@ final class ServicoAportesMetas
         $saida = bcsub('0', $valor, 2);
 
         return DB::table('transacoes')->insertGetId([
-            'uuid' => IdentificadorPublico::novo(),
+            'uuid' => IdentificadorPublico::novo(), 'codigo' => Codigo::novo($usuario),
             'usuario_id' => $usuario, 'conta_id' => $conta->id,
             'data_efetiva' => $data, 'valor' => $saida, 'moeda' => 'BRL',
             'descricao_original' => $descricao, 'descricao_normalizada' => Identidade::descricao($descricao),

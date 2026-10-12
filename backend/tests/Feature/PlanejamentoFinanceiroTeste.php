@@ -263,6 +263,15 @@ final class PlanejamentoFinanceiroTeste extends TestCase
 
     private function conta(string $token, string $nome, string $moeda = 'BRL', ?string $instituicao = null, string $tipo = 'corrente'): string
     {
+        if ($tipo === 'cartao_credito') {
+            $pagadora = $this->conta($token, "$nome - conta vinculada", $moeda, $instituicao);
+
+            return $this->withToken($token)->postJson('/api/v1/contas', [
+                'nome' => $nome, 'tipo' => $tipo, 'conta_pagamento_id' => $pagadora,
+                'limite_credito' => '5000.00', 'dia_fechamento' => 10, 'dia_vencimento' => 17,
+            ])->assertCreated()->json('id');
+        }
+
         return $this->withToken($token)->postJson('/api/v1/contas', [
             'nome' => $nome, 'tipo' => $tipo, 'moeda' => $moeda,
             'saldo_inicial' => '1000.00', 'instituicao' => $instituicao,

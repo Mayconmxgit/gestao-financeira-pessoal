@@ -1,5 +1,6 @@
 <?php
 
+use App\Modulos\Financeiro\Cartoes\ServicoFaturasCartao;
 use App\Modulos\Financeiro\Planejamento\ServicoPagamentosRecorrentes;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
@@ -21,3 +22,11 @@ Artisan::command('financeiro:processar-recorrencias', function (ServicoPagamento
 
 Schedule::command('financeiro:processar-recorrencias')
     ->hourly()->name('cobrancas-recorrentes-automaticas')->withoutOverlapping();
+
+Artisan::command('financeiro:fechar-faturas-cartao', function (ServicoFaturasCartao $servico): void {
+    $fechadas = $servico->fecharTodas(now(config('app.timezone'))->toDateString());
+    $this->info("Faturas fechadas: {$fechadas}");
+})->purpose('Fecha faturas de cartão e atualiza vencimentos');
+
+Schedule::command('financeiro:fechar-faturas-cartao')
+    ->dailyAt('00:05')->timezone('America/Sao_Paulo')->name('fechamento-faturas-cartao')->withoutOverlapping();

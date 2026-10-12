@@ -2,6 +2,7 @@
 
 namespace App\Modulos\Financeiro\Resumo;
 
+use App\Modulos\Financeiro\Cartoes\ServicoFaturasCartao;
 use App\Modulos\Financeiro\Emprestimos\IndicadoresDividas;
 use App\Modulos\Financeiro\Suporte\EntradaFinanceira as Entrada;
 use Illuminate\Support\Facades\DB;
@@ -12,6 +13,7 @@ final class ServicoResumoFinanceiro
     public function __construct(
         private readonly IndicadoresDividas $indicadoresDividas,
         private readonly ProjecaoCompromissosProximoMes $projecao,
+        private readonly ServicoFaturasCartao $faturasCartao,
     ) {}
 
     public function calcular(int $usuario, array $dados): array
@@ -33,6 +35,7 @@ final class ServicoResumoFinanceiro
             ),
             'dividas' => $this->indicadoresDividas->calcular($usuario, $moeda, (string) $totais['receitas']),
             'compromissos_proximo_mes' => $this->projecao->calcular($usuario, (string) $moeda, $dados['fim']),
+            'faturas_cartao' => $this->faturasCartao->resumo($usuario, (string) $moeda),
         ];
     }
 

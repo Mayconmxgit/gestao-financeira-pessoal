@@ -2,6 +2,8 @@
 
 namespace App\Modulos\Financeiro\Importacao;
 
+use App\Modulos\Financeiro\Cartoes\ServicoFaturasCartao;
+use App\Modulos\Financeiro\Suporte\CodigoMovimentacao as Codigo;
 use App\Modulos\Financeiro\Suporte\EntradaFinanceira as Entrada;
 use App\Modulos\Financeiro\Suporte\IdentificadorPublico;
 use Illuminate\Support\Facades\DB;
@@ -9,6 +11,8 @@ use Illuminate\Validation\ValidationException;
 
 final class ServicoImportacao
 {
+    public function __construct(private readonly ServicoFaturasCartao $faturas) {}
+
     private function lote(int $usuario, int $id): object
     {
         $lote = DB::table('lotes_importacao')->where('usuario_id', $usuario)->where('id', $id)->first();
@@ -157,9 +161,11 @@ final class ServicoImportacao
                     }
                 }
                 $natureza = bccomp((string) $linha->valor, '0', 2) > 0 ? 'entrada' : ($conta->tipo === 'cartao_credito' ? 'compra_cartao' : 'saida');
+                $fatura = $natureza === 'compra_cartao'
+                    ? $this->faturas->prepararCompra($usuario, (int) $conta->id, (string) $linha->valor, $linha->data_efetiva) : null;
                 $transacao = DB::table('transacoes')->insertGetId([
-                    'uuid' => IdentificadorPublico::novo(),
-                    'usuario_id' => $usuario, 'conta_id' => $conta->id, 'lote_id' => $id,
+                    'uuid' => IdentificadorPublico::novo(), 'codigo' => Codigo::novo($usuario),
+                    'usuario_id' => $usuario, 'conta_id' => $conta->id, 'fatura_cartao_id' => $fatura, 'lote_id' => $id,
                     'categoria_id' => $categoria, 'data_efetiva' => $linha->data_efetiva,
                     'valor' => $linha->valor, 'moeda' => $conta->moeda,
                     'descricao_original' => $linha->descricao_original,
@@ -169,6 +175,9 @@ final class ServicoImportacao
                     'natureza' => $natureza, 'situacao' => 'confirmada', 'origem' => 'importacao',
                     'created_at' => now(), 'updated_at' => now(),
                 ]);
+                if ($fatura !== null) {
+                    $this->faturas->sincronizar($fatura);
+                }
                 $importadas++;
                 $this->registrarDecisao($usuario, $linha->id, $candidato ? 'separada' : 'importar', $candidato?->id, $transacao, $decisao['motivo'] ?? null);
             }

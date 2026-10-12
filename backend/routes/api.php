@@ -7,6 +7,7 @@ use App\Modulos\Assinaturas\Dominio\RecursosPlano;
 use App\Modulos\Financeiro\Controladores\ControladorCategorias;
 use App\Modulos\Financeiro\Controladores\ControladorContas;
 use App\Modulos\Financeiro\Controladores\ControladorEmprestimos;
+use App\Modulos\Financeiro\Controladores\ControladorFaturasCartao;
 use App\Modulos\Financeiro\Controladores\ControladorImportacoes;
 use App\Modulos\Financeiro\Controladores\ControladorMetasFinanceiras;
 use App\Modulos\Financeiro\Controladores\ControladorPagamentosRecorrentes;
@@ -52,6 +53,9 @@ Route::prefix('v1')->group(function (): void {
             Route::post('/contas', [ControladorContas::class, 'criar']);
             Route::patch('/contas/{id}', [ControladorContas::class, 'atualizar']);
             Route::post('/contas/{id}/ajustes', [ControladorContas::class, 'ajustar']);
+            Route::get('/contas/{id}/faturas', [ControladorFaturasCartao::class, 'listar']);
+            Route::get('/contas/{id}/faturas/{faturaId}', [ControladorFaturasCartao::class, 'mostrar']);
+            Route::post('/contas/{id}/faturas/{faturaId}/pagamento', [ControladorFaturasCartao::class, 'pagar']);
             Route::get('/categorias', [ControladorCategorias::class, 'listar']);
             Route::post('/categorias', [ControladorCategorias::class, 'criar']);
             Route::patch('/categorias/{id}', [ControladorCategorias::class, 'atualizar']);

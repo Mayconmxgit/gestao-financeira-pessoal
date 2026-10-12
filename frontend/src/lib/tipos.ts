@@ -25,6 +25,17 @@ export type EventoAssinatura = {
 export type Conta = {
   id: string; nome: string; tipo: string; moeda: string; saldo_inicial: string;
   instituicao: string | null; situacao: "ativa" | "arquivada";
+  conta_pagamento_id?: string | null; conta_pagamento_nome?: string | null;
+  limite_credito?: string | null; limite_utilizado?: string; limite_disponivel?: string;
+  dia_fechamento?: number | null; dia_vencimento?: number | null; fatura_atual?: FaturaCartao | null;
+};
+
+export type FaturaCartao = {
+  id: string; cartao_id: string; conta_pagamento_id: string; inicio_periodo: string;
+  fim_periodo: string; fechamento: string; vencimento: string; valor_total: string;
+  credito_anterior: string; credito_proximo: string;
+  situacao: "aberta" | "fechada" | "vencida" | "paga";
+  transacao_pagamento_id: string | null; paga_em: string | null;
 };
 
 export type Categoria = {
@@ -32,7 +43,7 @@ export type Categoria = {
 };
 
 export type Transacao = {
-  id: string; conta_id: string; categoria_id: string | null; lote_id: string | null;
+  id: string; codigo: string; conta_id: string; categoria_id: string | null; lote_id: string | null;
   transacao_relacionada_id: string | null; data_efetiva: string; valor: string;
   moeda: string; descricao_original: string; natureza: string;
   situacao: string; origem: string; editavel?: boolean;
@@ -45,6 +56,7 @@ export type PagamentoRecorrente = {
   cobranca_automatica: boolean;
   primeiro_vencimento: string; proximo_vencimento: string | null; data_fim: string | null;
   situacao: "ativo" | "pausado" | "encerrado"; conta_nome: string; categoria_nome: string | null;
+  falha_automatica?: string | null; falha_automatica_em?: string | null;
 };
 
 export type AporteMeta = {
@@ -71,6 +83,14 @@ export type Resumo = {
     categoria_id: string; nome: string; total: string; percentual: string;
     limite_gastos: string | null; percentual_limite: string | null; limite_ultrapassado: boolean;
   }>;
+  faturas_cartao?: {
+    total: string;
+    itens: Array<{
+      cartao_id: string; cartao_nome: string; conta_pagamento_id: string; conta_pagamento_nome: string;
+      instituicao: string | null; valor: string; fechamento: string; vencimento: string;
+      situacao: FaturaCartao["situacao"]; alerta: "normal" | "fechamento_proximo" | "fechada" | "vencida";
+    }>;
+  };
   dividas?: {
     endividamento_total: string; parcelas_mensais_dividas: string; saldo_devedor_total: string;
     juros_futuros_estimados: string; custo_total_dividas: string;

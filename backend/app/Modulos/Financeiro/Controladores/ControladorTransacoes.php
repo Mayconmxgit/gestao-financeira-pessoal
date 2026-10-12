@@ -3,6 +3,8 @@
 namespace App\Modulos\Financeiro\Controladores;
 
 use App\Http\Controllers\Controller;
+use App\Modulos\Financeiro\Cartoes\ServicoFaturasCartao;
+use App\Modulos\Financeiro\Suporte\CodigoMovimentacao as Codigo;
 use App\Modulos\Financeiro\Suporte\EntradaFinanceira as Entrada;
 use App\Modulos\Financeiro\Suporte\IdentidadeTransacao as Identidade;
 use App\Modulos\Financeiro\Suporte\IdentificadorPublico;
@@ -15,6 +17,8 @@ use Illuminate\Validation\ValidationException;
 
 final class ControladorTransacoes extends Controller
 {
+    public function __construct(private readonly ServicoFaturasCartao $faturas) {}
+
     public function listar(Request $requisicao): JsonResponse
     {
         $dados = $this->validarFiltros($requisicao);
@@ -120,12 +124,18 @@ final class ControladorTransacoes extends Controller
         $usuario = Entrada::usuario($requisicao);
         [$conta, $valor, $descricao] = $this->prepararMovimentacao($usuario, $dados);
         $id = DB::transaction(function () use ($usuario, $conta, $dados, $valor, $descricao): int {
+            $fatura = $conta->tipo === 'cartao_credito'
+                ? $this->faturas->prepararCompra($usuario, (int) $conta->id, $valor, $dados['data']) : null;
             $registro = $this->dadosPersistencia($usuario, $conta, $dados, $valor, $descricao, null) + [
-                'uuid' => IdentificadorPublico::novo(),
+                'uuid' => IdentificadorPublico::novo(), 'codigo' => Codigo::novo($usuario),
+                'fatura_cartao_id' => $fatura,
                 'usuario_id' => $usuario, 'situacao' => 'confirmada', 'origem' => 'manual',
                 'created_at' => now(), 'updated_at' => now(),
             ];
             $id = DB::table('transacoes')->insertGetId($registro);
+            if ($fatura !== null) {
+                $this->faturas->sincronizar($fatura);
+            }
             Entrada::auditar($usuario, 'transacao_criada', 'transacoes', $id);
 
             return $id;
@@ -144,8 +154,15 @@ final class ControladorTransacoes extends Controller
             abort_if($transacao === null, 404);
             $this->assegurarEdicaoPermitida($transacao);
             [$conta, $valor, $descricao] = $this->prepararMovimentacao($usuario, $dados, $transacao);
-            $novos = $this->dadosPersistencia($usuario, $conta, $dados, $valor, $descricao, $transacao->documento);
+            $faturaAnterior = $transacao->fatura_cartao_id;
+            $fatura = $conta->tipo === 'cartao_credito'
+                ? $this->faturas->prepararEdicaoCompra($usuario, $transacao, (int) $conta->id, $valor, $dados['data']) : null;
+            $novos = $this->dadosPersistencia($usuario, $conta, $dados, $valor, $descricao, $transacao->documento)
+                + ['fatura_cartao_id' => $fatura];
             DB::table('transacoes')->where('id', $id)->update($novos + ['updated_at' => now()]);
+            foreach (array_unique(array_filter([$faturaAnterior, $fatura])) as $faturaId) {
+                $this->faturas->sincronizar((int) $faturaId);
+            }
             Entrada::auditar($usuario, 'transacao_editada', 'transacoes', $id, [
                 'antes' => $this->dadosAuditaveis($transacao),
                 'depois' => $this->dadosAuditaveis((object) ($novos + ['id' => $id])),
@@ -297,13 +314,16 @@ final class ControladorTransacoes extends Controller
         if ($origem->moeda !== $destino->moeda || bccomp($dados['valor'], '0', 2) <= 0 || $origem->tipo === 'cartao_credito') {
             throw ValidationException::withMessages(['valor' => 'Transferência exige valor positivo e contas ativas da mesma moeda.']);
         }
+        if ($destino->tipo === 'cartao_credito' && $destino->conta_pagamento_id !== null) {
+            throw ValidationException::withMessages(['destino_id' => 'Pague o cartão pela fatura correspondente.']);
+        }
         $ids = DB::transaction(function () use ($usuario, $origem, $destino, $dados): array {
             $natureza = $destino->tipo === 'cartao_credito' ? 'pagamento_fatura' : 'transferencia';
             $valor = Entrada::moeda($dados['valor']);
             $ids = [];
             foreach ([[$origem, bcsub('0', $valor, 2)], [$destino, $valor]] as [$conta, $valorLado]) {
                 $ids[] = DB::table('transacoes')->insertGetId([
-                    'uuid' => IdentificadorPublico::novo(),
+                    'uuid' => IdentificadorPublico::novo(), 'codigo' => Codigo::novo($usuario),
                     'usuario_id' => $usuario, 'conta_id' => $conta->id,
                     'data_efetiva' => $dados['data'], 'valor' => $valorLado,
                     'moeda' => $conta->moeda, 'descricao_original' => trim($dados['descricao']),
@@ -340,11 +360,15 @@ final class ControladorTransacoes extends Controller
             abort_if(DB::table('transacoes')->where('transacao_relacionada_id', $id)->where('natureza', 'estorno')->exists(), 409);
             $valor = bcsub('0', (string) $original->valor, 2);
             $descricao = trim($dados['motivo']);
+            $conta = Entrada::conta($usuario, (int) $original->conta_id);
+            $fatura = $conta->tipo === 'cartao_credito'
+                ? $this->faturas->faturaParaCredito($usuario, (int) $conta->id, $original->fatura_cartao_id) : null;
             $novo = DB::table('transacoes')->insertGetId([
-                'uuid' => IdentificadorPublico::novo(),
+                'uuid' => IdentificadorPublico::novo(), 'codigo' => Codigo::novo($usuario),
                 'usuario_id' => $usuario, 'conta_id' => $original->conta_id,
                 'categoria_id' => $original->categoria_id,
                 'transacao_relacionada_id' => $id,
+                'fatura_cartao_id' => $fatura,
                 'data_efetiva' => $dados['data'], 'valor' => $valor,
                 'moeda' => $original->moeda, 'descricao_original' => $descricao,
                 'descricao_normalizada' => Identidade::descricao($descricao),
@@ -352,6 +376,9 @@ final class ControladorTransacoes extends Controller
                 'natureza' => 'estorno', 'situacao' => 'confirmada', 'origem' => 'manual',
                 'created_at' => now(), 'updated_at' => now(),
             ]);
+            if ($fatura !== null) {
+                $this->faturas->sincronizar($fatura);
+            }
             Entrada::auditar($usuario, 'transacao_estornada', 'transacoes', $id, ['estorno_id' => $novo, 'motivo' => $descricao]);
 
             return $novo;
@@ -375,6 +402,10 @@ final class ControladorTransacoes extends Controller
             $outra = Entrada::conta($usuario, (int) $dados['conta_contrapartida_id']);
             abort_unless($outra->id !== $conta->id && $outra->situacao === 'ativa' && $outra->moeda === $conta->moeda, 422);
             $cartoes = (int) ($conta->tipo === 'cartao_credito') + (int) ($outra->tipo === 'cartao_credito');
+            if ($dados['natureza'] === 'pagamento_fatura' && (($conta->tipo === 'cartao_credito' && $conta->conta_pagamento_id !== null)
+                || ($outra->tipo === 'cartao_credito' && $outra->conta_pagamento_id !== null))) {
+                throw ValidationException::withMessages(['natureza' => 'Vincule o débito pela fatura correspondente.']);
+            }
             if (($dados['natureza'] === 'pagamento_fatura' && $cartoes !== 1) || ($dados['natureza'] === 'transferencia' && $cartoes !== 0)) {
                 throw ValidationException::withMessages(['natureza' => 'Contas incompatíveis com a natureza.']);
             }
@@ -383,7 +414,7 @@ final class ControladorTransacoes extends Controller
                 throw ValidationException::withMessages(['natureza' => 'Pagamento exige saída da conta pagadora e entrada no cartão.']);
             }
             $novo = DB::table('transacoes')->insertGetId([
-                'uuid' => IdentificadorPublico::novo(),
+                'uuid' => IdentificadorPublico::novo(), 'codigo' => Codigo::novo($usuario),
                 'usuario_id' => $usuario, 'conta_id' => $outra->id,
                 'transacao_relacionada_id' => $id,
                 'data_efetiva' => $original->data_efetiva, 'valor' => $valor,

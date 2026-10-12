@@ -32,6 +32,7 @@ export default function VisaoGeral() {
   const saidas = Number(totais?.saidas ?? 0);
   const gastosPorCategoria = resumo.dados?.despesas_por_categoria ?? [];
   const compromissos = resumo.dados?.compromissos_proximo_mes;
+  const faturas = resumo.dados?.faturas_cartao;
 
   return <div className="pagina-dashboard">
     <CabecalhoPagina titulo={`Olá, ${usuario?.nome.split(" ")[0] ?? "você"} 👋`}
@@ -39,6 +40,7 @@ export default function VisaoGeral() {
       acao={<div className="cabecalho-acoes cabecalho-acoes-visao-geral"><Botao type="button" variante="secundario" onClick={() => definirValoresOcultos((atual) => !atual)}>{valoresOcultos ? <Eye size={17} aria-hidden="true" /> : <EyeOff size={17} aria-hidden="true" />}{valoresOcultos ? "Mostrar valores" : "Ocultar valores"}</Botao>{moedas.length > 1 && <label className="filtro-mes"><span>Moeda</span><select value={moeda} onChange={(e) => definirMoeda(e.target.value)} aria-label="Selecionar moeda">{moedas.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>}<label className="filtro-mes"><span>Período</span><input type="month" value={mes} onChange={(e) => definirMes(e.target.value)} aria-label="Selecionar mês" /></label></div>} />
     {resumo.erro && <Aviso>{resumo.erro}</Aviso>}
     {contas.dados?.dados.length === 0 ? <div className="onboarding-destaque"><div><span className="sobretitulo">COMECE POR AQUI</span><h2>Seu espaço financeiro está pronto.</h2><p>Cadastre sua primeira conta e informe o saldo inicial. Depois, importe um extrato para ver seus números ganharem vida.</p><Link href="/contas" className="botao botao-claro">Adicionar minha primeira conta <ArrowRight size={17} /></Link></div><div className="onboarding-arte"><Wallet size={76} strokeWidth={1.2} /></div></div> : null}
+    {!!faturas?.itens.length && <AlertasFaturas faturas={faturas} moeda={moeda} valoresOcultos={valoresOcultos} />}
     <div className="metricas-grade">
       <Cartao className="metrica metrica-principal"><div className="metrica-rotulo"><span>Saldo gerencial</span><Wallet size={20} /></div><strong>{resumo.carregando ? "—" : <ValorMonetario valor={totais?.saldo_final ?? "0"} moeda={moeda} oculto={valoresOcultos} />}</strong><p>Posição consolidada em {nomeMes(data)}</p><span className="metrica-marcador">Baseado nos seus lançamentos confirmados</span></Cartao>
       <Cartao className="metrica"><div className="metrica-rotulo"><span>Entradas do período</span><span className="icone-metrica positivo"><TrendingUp size={20} /></span></div><strong>{resumo.carregando ? "—" : <ValorMonetario valor={totais?.entradas ?? "0"} moeda={moeda} oculto={valoresOcultos} />}</strong><p>Inclui lançamentos sem categoria</p></Cartao>
@@ -67,6 +69,26 @@ export default function VisaoGeral() {
       </Cartao>
     </div>
   </div>;
+}
+
+function AlertasFaturas({ faturas, moeda, valoresOcultos }: {
+  faturas: NonNullable<Resumo["faturas_cartao"]>; moeda: string; valoresOcultos: boolean;
+}) {
+  return <Cartao className="alertas-faturas">
+    <div className="cartao-cabecalho"><div><h2>Faturas dos cartões</h2><p>Total atual: <strong><ValorMonetario valor={faturas.total} moeda={moeda} oculto={valoresOcultos} /></strong></p></div><Link href="/contas" className="link-ver-todos">Ver faturas <ArrowRight size={16} /></Link></div>
+    <div className="alertas-faturas-lista">{faturas.itens.map((item) => <div key={item.cartao_id} className={`alerta-fatura alerta-fatura-${item.alerta}`}>
+      <span className="acao-icone acao-laranja"><CreditCard size={19} /></span>
+      <div><strong>{item.cartao_nome}</strong><small>{textoAlertaFatura(item.alerta)} · {item.conta_pagamento_nome}{item.instituicao ? ` (${item.instituicao})` : ""}</small><small>Fechamento {formatarData(item.fechamento)} · vencimento {formatarData(item.vencimento)}</small></div>
+      <strong><ValorMonetario valor={item.valor} moeda={moeda} oculto={valoresOcultos} /></strong>
+    </div>)}</div>
+  </Cartao>;
+}
+
+function textoAlertaFatura(alerta: "normal" | "fechamento_proximo" | "fechada" | "vencida") {
+  if (alerta === "fechamento_proximo") return "Fechamento próximo";
+  if (alerta === "fechada") return "Fatura fechada";
+  if (alerta === "vencida") return "Fatura vencida";
+  return "Fatura atual";
 }
 
 function HistoricoGastosPrevistos({ compromissos, moeda, carregando, valoresOcultos }: {

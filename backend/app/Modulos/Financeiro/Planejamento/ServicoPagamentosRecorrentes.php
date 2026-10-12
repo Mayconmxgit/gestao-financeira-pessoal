@@ -2,6 +2,8 @@
 
 namespace App\Modulos\Financeiro\Planejamento;
 
+use App\Modulos\Financeiro\Cartoes\ServicoFaturasCartao;
+use App\Modulos\Financeiro\Suporte\CodigoMovimentacao as Codigo;
 use App\Modulos\Financeiro\Suporte\EntradaFinanceira as Entrada;
 use App\Modulos\Financeiro\Suporte\IdentidadeTransacao as Identidade;
 use App\Modulos\Financeiro\Suporte\IdentificadorPublico;
@@ -13,7 +15,10 @@ use Throwable;
 
 final class ServicoPagamentosRecorrentes
 {
-    public function __construct(private readonly CalculadoraAgendaRecorrente $agenda) {}
+    public function __construct(
+        private readonly CalculadoraAgendaRecorrente $agenda,
+        private readonly ServicoFaturasCartao $faturas,
+    ) {}
 
     public function pagar(int $usuario, int $id, string $data): array
     {
@@ -43,6 +48,10 @@ final class ServicoPagamentosRecorrentes
                             $dataLimite
                         );
                     } catch (Throwable $falha) {
+                        DB::table('pagamentos_recorrentes')->where('id', $pagamento->id)->update([
+                            'falha_automatica' => $falha instanceof ValidationException ? 'limite_insuficiente' : 'erro_processamento',
+                            'falha_automatica_em' => now(), 'updated_at' => now(),
+                        ]);
                         Log::error('Falha ao processar cobrança recorrente automática', [
                             'pagamento_recorrente_id' => $pagamento->id,
                             'tipo' => get_class($falha),
@@ -108,7 +117,8 @@ final class ServicoPagamentosRecorrentes
         ]);
         $proximo = $this->agenda->proximo($pagamento);
         DB::table('pagamentos_recorrentes')->where('id', $pagamento->id)->update([
-            'proximo_vencimento' => $proximo, 'situacao' => $proximo === null ? 'encerrado' : 'ativo', 'updated_at' => now(),
+            'proximo_vencimento' => $proximo, 'situacao' => $proximo === null ? 'encerrado' : 'ativo',
+            'falha_automatica' => null, 'falha_automatica_em' => null, 'updated_at' => now(),
         ]);
         Entrada::auditar($usuario, 'pagamento_recorrente_confirmado', 'pagamentos_recorrentes', $pagamento->id, [
             'vencimento' => $pagamento->proximo_vencimento, 'transacao_id' => $transacao,
@@ -130,16 +140,24 @@ final class ServicoPagamentosRecorrentes
     {
         $valor = bcsub('0', (string) $pagamento->valor, 2);
         $natureza = $conta->tipo === 'cartao_credito' ? 'compra_cartao' : 'saida';
+        $fatura = $conta->tipo === 'cartao_credito'
+            ? $this->faturas->prepararCompra($usuario, (int) $conta->id, $valor, $data) : null;
 
-        return DB::table('transacoes')->insertGetId([
-            'uuid' => IdentificadorPublico::novo(),
-            'usuario_id' => $usuario, 'conta_id' => $conta->id, 'categoria_id' => $pagamento->categoria_id,
+        $id = DB::table('transacoes')->insertGetId([
+            'uuid' => IdentificadorPublico::novo(), 'codigo' => Codigo::novo($usuario),
+            'usuario_id' => $usuario, 'conta_id' => $conta->id, 'fatura_cartao_id' => $fatura,
+            'categoria_id' => $pagamento->categoria_id,
             'data_efetiva' => $data, 'valor' => $valor, 'moeda' => 'BRL',
             'descricao_original' => $pagamento->descricao, 'descricao_normalizada' => Identidade::descricao($pagamento->descricao),
             'fingerprint' => Identidade::fingerprint($usuario, $conta->id, $data, $valor, 'BRL', null, $pagamento->descricao),
             'natureza' => $natureza, 'situacao' => 'confirmada', 'origem' => 'manual',
             'created_at' => now(), 'updated_at' => now(),
         ]);
+        if ($fatura !== null) {
+            $this->faturas->sincronizar($fatura);
+        }
+
+        return $id;
     }
 
     private function validarCategoria(int $usuario, ?int $categoria): void

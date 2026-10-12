@@ -2,6 +2,7 @@
 
 namespace App\Modulos\Financeiro\Emprestimos;
 
+use App\Modulos\Financeiro\Suporte\CodigoMovimentacao as Codigo;
 use App\Modulos\Financeiro\Suporte\IdentificadorPublico;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -87,7 +88,9 @@ final class RepositorioEmprestimos
 
     public function criarTransacao(array $dados): int
     {
-        return DB::table('transacoes')->insertGetId(['uuid' => IdentificadorPublico::novo(), ...$dados]);
+        return DB::table('transacoes')->insertGetId([
+            'uuid' => IdentificadorPublico::novo(), 'codigo' => Codigo::novo((int) $dados['usuario_id']), ...$dados,
+        ]);
     }
 
     public function transacao(int $usuario, int $id, bool $bloquear = false): ?object

@@ -13,7 +13,7 @@ use Symfony\Component\HttpFoundation\Response;
 final class MiddlewareIdentificadoresPublicos
 {
     private const PARAMETROS_ROTA = [
-        'contas' => ['id' => 'contas'], 'categorias' => ['id' => 'categorias'],
+        'contas' => ['id' => 'contas', 'faturaId' => 'faturas_cartao'], 'categorias' => ['id' => 'categorias'],
         'transacoes' => ['id' => 'transacoes'], 'pagamentos-recorrentes' => ['id' => 'pagamentos_recorrentes'],
         'metas-financeiras' => ['id' => 'metas_financeiras'],
         'emprestimos' => ['id' => 'emprestimos', 'parcelaId' => 'parcelas_emprestimo'],
@@ -26,6 +26,7 @@ final class MiddlewareIdentificadoresPublicos
         'conta_contrapartida_id' => 'contas', 'conta_recebimento_id' => 'contas', 'conta_pagamento_id' => 'contas',
         'categoria_id' => 'categorias', 'linha_id' => 'linhas_importacao',
         'transacao_id' => 'transacoes', 'transacao_candidata_id' => 'transacoes',
+        'fatura_cartao_id' => 'faturas_cartao',
     ];
 
     public function __construct(

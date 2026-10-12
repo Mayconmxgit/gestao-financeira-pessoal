@@ -22,7 +22,7 @@ final class ControladorPrivacidade extends Controller
             $perfil = DB::table('usuarios')->where('id', $usuario)
                 ->first(['id', 'nome', 'email', 'papel', 'criado_em', 'atualizado_em']);
             echo substr(json_encode(['gerado_em' => now()->toIso8601String(), 'usuario' => $perfil], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR), 0, -1);
-            foreach (['contas', 'categorias', 'lotes_importacao', 'transacoes', 'pagamentos_recorrentes', 'execucoes_pagamentos_recorrentes', 'metas_financeiras', 'aportes_metas', 'emprestimos', 'decisoes_conciliacao', 'auditoria_financeira', 'consentimentos_ia', 'uso_ia'] as $tabela) {
+            foreach (['contas', 'categorias', 'lotes_importacao', 'transacoes', 'faturas_cartao', 'pagamentos_recorrentes', 'execucoes_pagamentos_recorrentes', 'metas_financeiras', 'aportes_metas', 'emprestimos', 'decisoes_conciliacao', 'auditoria_financeira', 'consentimentos_ia', 'uso_ia'] as $tabela) {
                 $this->emitirTabela($tabela, DB::table($tabela)->where('usuario_id', $usuario)->orderBy('id')->cursor());
             }
             $assinaturas = DB::table('assinaturas')->where('usuario_id', $usuario)->orderBy('id')->cursor();
@@ -100,11 +100,15 @@ final class ControladorPrivacidade extends Controller
             DB::table('aportes_metas')->where('usuario_id', $id)->delete();
             DB::table('metas_financeiras')->where('usuario_id', $id)->delete();
             DB::table('transacoes')->where('usuario_id', $id)->update(['transacao_relacionada_id' => null]);
+            DB::table('faturas_cartao')->where('usuario_id', $id)->update(['transacao_pagamento_id' => null, 'transacao_cartao_id' => null]);
+            DB::table('transacoes')->where('usuario_id', $id)->update(['fatura_cartao_id' => null]);
+            DB::table('faturas_cartao')->where('usuario_id', $id)->delete();
             DB::table('transacoes')->where('usuario_id', $id)->delete();
             $lotes = DB::table('lotes_importacao')->where('usuario_id', $id)->pluck('id');
             DB::table('linhas_importacao')->whereIn('lote_id', $lotes)->delete();
             DB::table('lotes_importacao')->where('usuario_id', $id)->delete();
             DB::table('categorias')->where('usuario_id', $id)->delete();
+            DB::table('contas')->where('usuario_id', $id)->update(['conta_pagamento_id' => null]);
             DB::table('contas')->where('usuario_id', $id)->delete();
             DB::table('auditoria_financeira')->where('usuario_id', $id)->delete();
             DB::table('recuperacoes_acesso')->where('email', $usuario->email)->delete();

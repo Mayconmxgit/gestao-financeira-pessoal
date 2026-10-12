@@ -11,7 +11,7 @@ final class IdentificadorPublico
     private const TABELAS = [
         'contas', 'categorias', 'lotes_importacao', 'linhas_importacao', 'transacoes',
         'pagamentos_recorrentes', 'metas_financeiras', 'aportes_metas', 'emprestimos',
-        'parcelas_emprestimo',
+        'parcelas_emprestimo', 'faturas_cartao',
     ];
 
     public static function novo(): string

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Modulos\Financeiro\Cartoes\ServicoFaturasCartao;
 use App\Modulos\Usuarios\Modelos\Usuario;
 use App\Modulos\Usuarios\Servicos\ServicoToken;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -32,6 +33,15 @@ final class FinanceiroPessoalTeste extends TestCase
 
     private function conta(string $token, string $nome, string $tipo = 'corrente'): string
     {
+        if ($tipo === 'cartao_credito') {
+            $pagadora = $this->conta($token, "$nome - conta vinculada");
+
+            return $this->withToken($token)->postJson('/api/v1/contas', [
+                'nome' => $nome, 'tipo' => $tipo, 'conta_pagamento_id' => $pagadora,
+                'limite_credito' => '5000.00', 'dia_fechamento' => 10, 'dia_vencimento' => 17,
+            ])->assertCreated()->json('id');
+        }
+
         return $this->withToken($token)->postJson('/api/v1/contas', [
             'nome' => $nome, 'tipo' => $tipo, 'moeda' => 'BRL',
             'saldo_inicial' => '1000.00',
@@ -511,8 +521,8 @@ final class FinanceiroPessoalTeste extends TestCase
         $token = $this->autenticar('ana@exemplo.test');
         $corrente = $this->conta($token, 'Corrente');
         $cartao = $this->withToken($token)->postJson('/api/v1/contas', [
-            'nome' => 'Cartão', 'tipo' => 'cartao_credito', 'moeda' => 'BRL',
-            'saldo_inicial' => '0.00',
+            'nome' => 'Cartão', 'tipo' => 'cartao_credito', 'conta_pagamento_id' => $corrente,
+            'limite_credito' => '5000.00', 'dia_fechamento' => 10, 'dia_vencimento' => 17,
         ])->assertCreated()->json('id');
         $categoria = $this->withToken($token)->postJson('/api/v1/categorias', [
             'nome' => 'Compras', 'tipo' => 'despesa',
@@ -521,10 +531,11 @@ final class FinanceiroPessoalTeste extends TestCase
             'conta_id' => $cartao, 'data' => '2026-09-03', 'valor' => '-100.00',
             'descricao' => 'Compra no cartão', 'natureza' => 'compra_cartao', 'categoria_id' => $categoria,
         ])->assertCreated();
-        $this->withToken($token)->postJson('/api/v1/transferencias', [
-            'origem_id' => $corrente, 'destino_id' => $cartao, 'data' => '2026-09-10',
-            'valor' => '100.00', 'descricao' => 'Pagamento da fatura',
-        ])->assertCreated();
+        app(ServicoFaturasCartao::class)->fecharTodas('2026-09-10');
+        $fatura = DB::table('faturas_cartao')->where('valor_total', '100.00')->value('uuid');
+        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/pagamento", [
+            'data' => '2026-09-10',
+        ])->assertOk();
         $this->withToken($token)->getJson('/api/v1/resumo?inicio=2026-09-01&fim=2026-09-30')
             ->assertOk()->assertJsonPath('consolidado.saldo_final', '900.00')
             ->assertJsonPath('consolidado.despesas', '100.00')
