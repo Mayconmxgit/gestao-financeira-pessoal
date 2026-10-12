@@ -79,8 +79,9 @@ export default function Movimentacoes() {
     finally { definirCarregandoMais(false); }
   }
 
-  function concluir(dataEfetiva?: string) {
+  function concluir(dataEfetiva?: string, forma?: "debito" | "cartao_credito") {
     definirAcao(null); selecionarCategoria(null); definirContinuacao(null);
+    if (forma) { definirFormaPagamento(forma); definirContaId(""); }
     if (dataEfetiva && dataEfetiva < inicio) definirInicio(dataEfetiva);
     if (dataEfetiva && dataEfetiva > fim) definirFim(dataEfetiva);
     pagina.recarregar(); categorias.recarregar();
@@ -126,13 +127,13 @@ export default function Movimentacoes() {
             const conta = contas.dados?.dados.find((c) => c.id === item.conta_id);
             const tipoCategoria = Number(item.valor) > 0 ? "receita" : "despesa";
             const classificavel = ["entrada", "saida", "compra_cartao", "estorno"].includes(item.natureza) && item.situacao === "confirmada";
-            return <tr key={item.id}><td><div className="tabela-descricao"><span className={`movimento-icone ${Number(item.valor) >= 0 ? "entrada" : "saida"}`}>{Number(item.valor) >= 0 ? <ArrowDownLeft size={18} /> : <ArrowUpRight size={18} />}</span><span><strong>{item.descricao_original}</strong><small>#{item.codigo} · {nomesNatureza[item.natureza] ?? item.natureza} · {nomesOrigem[item.origem] ?? item.origem}</small></span></div></td>
+            return <tr key={item.id}><td><div className="tabela-descricao"><span className={`movimento-icone ${Number(item.valor) >= 0 ? "entrada" : "saida"}`}>{Number(item.valor) >= 0 ? <ArrowDownLeft size={18} /> : <ArrowUpRight size={18} />}</span><span><strong>{item.descricao_original}{item.numero_parcela && item.total_parcelas ? ` · ${item.numero_parcela}/${item.total_parcelas}` : ""}</strong><small>#{item.codigo} · {nomesNatureza[item.natureza] ?? item.natureza} · {nomesOrigem[item.origem] ?? item.origem}</small></span></div></td>
               <td>{conta?.nome ?? "Conta"}</td><td>{classificavel ? <select className="seletor-tabela" value={item.categoria_id ?? ""} onChange={(e) => classificar(item, e.target.value)} aria-label={`Categoria de ${item.descricao_original}`}><option value="">A classificar</option>{categorias.dados?.dados.filter((c) => c.tipo === tipoCategoria).map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}</select> : <span className="etiqueta">Não se aplica</span>}</td>
               <td>{formatarData(item.data_efetiva)}</td><td className={`tabela-valor ${Number(item.valor) >= 0 ? "valor-positivo" : ""}`}>{formatarMoeda(item.valor, item.moeda)}</td><td><div className="acoes-tabela">{item.editavel && <button onClick={() => abrir("edicao", item)} title="Editar movimentação" aria-label={`Editar ${item.descricao_original}`}><Pencil size={17} /></button>}{["entrada", "saida", "compra_cartao"].includes(item.natureza) && item.situacao === "confirmada" && <button onClick={() => abrir("estorno", item)} title="Registrar estorno"><RotateCcw size={17} /></button>}{["entrada", "saida"].includes(item.natureza) && !item.transacao_relacionada_id && <button onClick={() => abrir("contrapartida", item)} title="Vincular contrapartida"><ArrowRightLeft size={17} /></button>}</div></td></tr>;
           })}</tbody></table></div> : !pagina.carregando && <Vazio titulo="Nenhum lançamento neste período" descricao="Importe um extrato ou adicione uma movimentação manual." acao={{ texto: "Importar extrato", href: "/importacoes" }} />}
           {proximo && <div className="carregar-mais"><Botao variante="secundario" onClick={carregarMais} carregando={carregandoMais}>Carregar mais <ChevronDown size={17} /></Botao></div>}
         </Cartao></>}
-    {acao === "lancamento" && <Modal titulo="Novo lançamento" fechar={() => definirAcao(null)}><FormularioMovimentacao contas={contas.dados?.dados ?? []} categorias={categorias.dados?.dados ?? []} concluir={concluir} /></Modal>}
+    {acao === "lancamento" && <Modal titulo="Novo lançamento" fechar={() => definirAcao(null)}><FormularioMovimentacao formaPagamentoInicial={formaPagamento} contas={contas.dados?.dados ?? []} categorias={categorias.dados?.dados ?? []} concluir={concluir} /></Modal>}
     {acao === "edicao" && selecionada && <Modal titulo="Editar movimentação" fechar={() => definirAcao(null)}><FormularioMovimentacao transacao={selecionada} contas={contas.dados?.dados ?? []} categorias={categorias.dados?.dados ?? []} concluir={concluir} /></Modal>}
     {acao === "transferencia" && <Modal titulo="Transferir entre contas" fechar={() => definirAcao(null)}><FormularioTransferencia contas={contas.dados?.dados ?? []} concluir={concluir} /></Modal>}
     {acao === "estorno" && selecionada && <Modal titulo="Registrar estorno" fechar={() => definirAcao(null)}><FormularioEstorno transacao={selecionada} concluir={concluir} /></Modal>}
@@ -141,23 +142,32 @@ export default function Movimentacoes() {
   </div>;
 }
 
-function FormularioMovimentacao({ transacao, contas, categorias, concluir }: { transacao?: Transacao; contas: Conta[]; categorias: Categoria[]; concluir: (data?: string) => void }) {
+function FormularioMovimentacao({ transacao, formaPagamentoInicial = "debito", contas, categorias, concluir }: { transacao?: Transacao; formaPagamentoInicial?: "debito" | "cartao_credito"; contas: Conta[]; categorias: Categoria[]; concluir: (data?: string, forma?: "debito" | "cartao_credito") => void }) {
+  const formaOriginal = transacao?.natureza === "compra_cartao" ? "cartao_credito" : formaPagamentoInicial;
+  const [formaPagamento, definirFormaPagamento] = useState<"debito" | "cartao_credito">(formaOriginal);
   const [contaId, definirContaId] = useState(transacao ? String(transacao.conta_id) : "");
-  const [natureza, definirNatureza] = useState(transacao?.natureza ?? "saida");
+  const [natureza, definirNatureza] = useState(transacao?.natureza ?? (formaPagamentoInicial === "cartao_credito" ? "compra_cartao" : "saida"));
   const [data, definirData] = useState(transacao?.data_efetiva ?? dataHojeLocal());
   const [valor, definirValor] = useState(transacao ? Math.abs(Number(transacao.valor)).toFixed(2) : "");
   const [descricao, definirDescricao] = useState(transacao?.descricao_original ?? "");
   const [categoriaId, definirCategoriaId] = useState(transacao?.categoria_id ? String(transacao.categoria_id) : "");
+  const [quantidadeParcelas, definirQuantidadeParcelas] = useState(String(transacao?.total_parcelas ?? 1));
   const [erro, definirErro] = useState("");
   const [enviando, definirEnviando] = useState(false);
-  const conta = contas.find((item) => item.id === contaId);
+  const contasCompativeis = contas.filter((item) => (item.situacao === "ativa" || item.id === transacao?.conta_id)
+    && (formaPagamento === "cartao_credito" ? item.tipo === "cartao_credito" : item.tipo !== "cartao_credito"));
+
+  function alterarFormaPagamento(forma: "debito" | "cartao_credito") {
+    definirFormaPagamento(forma); definirContaId(""); definirCategoriaId(""); definirQuantidadeParcelas("1");
+    definirNatureza(forma === "cartao_credito" ? "compra_cartao" : "saida");
+  }
 
   async function enviar(evento: FormEvent) {
     evento.preventDefault(); definirErro(""); definirEnviando(true);
     try {
       const caminho = transacao ? `financeiro/transacoes/${transacao.id}` : "financeiro/transacoes";
-      await api(caminho, { method: transacao ? "PATCH" : "POST", body: JSON.stringify({ conta_id: contaId, data, valor: natureza === "entrada" ? valor : `-${valor}`, descricao, natureza, categoria_id: categoriaId || null }) });
-      concluir(data);
+      await api(caminho, { method: transacao ? "PATCH" : "POST", body: JSON.stringify({ conta_id: contaId, data, valor: natureza === "entrada" ? valor : `-${valor}`, descricao, natureza, categoria_id: categoriaId || null, ...(!transacao && formaPagamento === "cartao_credito" ? { quantidade_parcelas: Number(quantidadeParcelas) } : {}) }) });
+      concluir(data, formaPagamento);
     } catch (falha) { definirErro(mensagemErro(falha)); }
     finally { definirEnviando(false); }
   }
@@ -166,8 +176,11 @@ function FormularioMovimentacao({ transacao, contas, categorias, concluir }: { t
     {transacao && transacao.origem !== "manual" && <Aviso tipo="info">Em uma movimentação importada, a conta de origem é preservada para manter a conciliação bancária.</Aviso>}
     {data > dataHojeLocal() && <Aviso tipo="info">Este lançamento ficará no mês da data escolhida e não será descontado do saldo do mês atual.</Aviso>}
     {erro && <Aviso>{erro}</Aviso>}
-    <Seletor rotulo="Conta" required disabled={Boolean(transacao && transacao.origem !== "manual")} value={contaId} onChange={(e) => { const nova = contas.find((c) => c.id === e.target.value); definirContaId(e.target.value); definirNatureza(nova?.tipo === "cartao_credito" ? "compra_cartao" : natureza === "compra_cartao" ? "saida" : natureza); definirCategoriaId(""); }}><option value="">Selecione</option>{contas.filter((c) => c.situacao === "ativa" || c.id === transacao?.conta_id).map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}</Seletor>
-    <Seletor rotulo="Tipo" value={natureza} onChange={(e) => { definirNatureza(e.target.value); definirCategoriaId(""); }}><option value="saida" disabled={conta?.tipo === "cartao_credito"}>Saída</option><option value="entrada">Entrada</option><option value="compra_cartao" disabled={conta?.tipo !== "cartao_credito"}>Compra no cartão</option></Seletor>
+    {!transacao && <div className="campo"><span>Forma de pagamento</span><div className="alternador-historico" role="group" aria-label="Forma de pagamento"><button type="button" className={formaPagamento === "debito" ? "ativa" : ""} aria-pressed={formaPagamento === "debito"} onClick={() => alterarFormaPagamento("debito")}>Débito</button><button type="button" className={formaPagamento === "cartao_credito" ? "ativa" : ""} aria-pressed={formaPagamento === "cartao_credito"} onClick={() => alterarFormaPagamento("cartao_credito")}>Cartão de crédito</button></div></div>}
+    <Seletor rotulo={formaPagamento === "cartao_credito" ? "Cartão de crédito" : "Conta"} required disabled={Boolean(transacao && transacao.origem !== "manual")} value={contaId} onChange={(e) => { definirContaId(e.target.value); definirCategoriaId(""); }}><option value="">Selecione</option>{contasCompativeis.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</Seletor>
+    {formaPagamento === "cartao_credito" ? <Seletor rotulo="Parcelamento" value={quantidadeParcelas} disabled={Boolean(transacao)} onChange={(e) => definirQuantidadeParcelas(e.target.value)}>{Array.from({ length: 60 }, (_, indice) => indice + 1).map((quantidade) => <option key={quantidade} value={quantidade}>{quantidade === 1 ? "À vista" : `${quantidade} parcelas`}</option>)}</Seletor>
+      : <Seletor rotulo="Tipo" value={natureza} onChange={(e) => { definirNatureza(e.target.value); definirCategoriaId(""); }}><option value="saida">Saída</option><option value="entrada">Entrada</option></Seletor>}
+    {formaPagamento === "cartao_credito" && Number(quantidadeParcelas) > 1 && <Aviso tipo="info">O valor informado é o total da compra. As parcelas serão lançadas mensalmente e o limite total será reservado agora.</Aviso>}
     <div className="formulario-duas-colunas"><Campo rotulo="Valor" type="number" min="0.01" step="0.01" required placeholder="0,00" value={valor} onChange={(e) => definirValor(e.target.value)} /><Campo rotulo="Data" type="date" required value={data} onChange={(e) => definirData(e.target.value)} /></div>
     <Campo rotulo="Descrição" required minLength={2} maxLength={500} placeholder="Ex.: Supermercado" value={descricao} onChange={(e) => definirDescricao(e.target.value)} />
     <Seletor rotulo="Categoria (opcional)" value={categoriaId} onChange={(e) => definirCategoriaId(e.target.value)}><option value="">A classificar</option>{categorias.filter((c) => c.tipo === (natureza === "entrada" ? "receita" : "despesa")).map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}</Seletor>

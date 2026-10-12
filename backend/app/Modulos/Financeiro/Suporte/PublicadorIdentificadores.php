@@ -22,6 +22,7 @@ final class PublicadorIdentificadores
         'lote' => 'lotes_importacao', 'linhas' => 'linhas_importacao', 'transacao' => 'transacoes',
         'origem' => 'transacoes', 'destino' => 'transacoes', 'original' => 'transacoes',
         'contrapartida' => 'transacoes', 'pagamento' => 'pagamentos_recorrentes',
+        'parcelas_compra' => 'transacoes',
         'meta' => 'metas_financeiras', 'aportes' => 'aportes_metas', 'emprestimo' => 'emprestimos',
         'parcelas' => 'parcelas_emprestimo', 'proxima_parcela' => 'parcelas_emprestimo',
         'faturas' => 'faturas_cartao',

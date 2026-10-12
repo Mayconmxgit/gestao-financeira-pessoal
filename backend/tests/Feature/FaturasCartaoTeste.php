@@ -100,6 +100,63 @@ final class FaturasCartaoTeste extends TestCase
         $this->assertDatabaseCount('transacoes', 1);
     }
 
+    public function test_compra_manual_parcelada_distribui_total_em_faturas_mensais(): void
+    {
+        $token = $this->autenticar('parcelada@exemplo.test');
+        $conta = $this->conta($token, 'Conta');
+        $cartao = $this->cartao($token, $conta, 'Cartão', '500.00');
+
+        $resposta = $this->withToken($token)->postJson('/api/v1/transacoes', [
+            ...$this->dadosCompra($cartao, '2026-10-07', '100.00'),
+            'descricao' => 'Compra parcelada', 'quantidade_parcelas' => 3,
+        ])->assertCreated()->assertJsonCount(3, 'parcelas_compra');
+
+        $parcelas = $resposta->json('parcelas_compra');
+        $this->assertSame([-33.34, -33.33, -33.33], array_column($parcelas, 'valor'));
+        $this->assertSame(['2026-10-07', '2026-11-07', '2026-12-07'], array_column($parcelas, 'data_efetiva'));
+        $this->assertSame([1, 2, 3], array_column($parcelas, 'numero_parcela'));
+        $this->assertSame([3, 3, 3], array_column($parcelas, 'total_parcelas'));
+        $this->assertCount(1, array_unique(array_column($parcelas, 'compra_parcelada_id')));
+        $this->assertNotNull($parcelas[0]['compra_parcelada_id']);
+        $this->assertDatabaseHas('faturas_cartao', ['fechamento' => '2026-10-10', 'valor_total' => '33.34']);
+        $this->assertDatabaseHas('faturas_cartao', ['fechamento' => '2026-11-10', 'valor_total' => '33.33']);
+        $this->assertDatabaseHas('faturas_cartao', ['fechamento' => '2026-12-10', 'valor_total' => '33.33']);
+        $this->withToken($token)->getJson('/api/v1/contas')->assertOk()
+            ->assertJsonFragment(['id' => $cartao, 'limite_utilizado' => '100.00', 'limite_disponivel' => '400.00']);
+    }
+
+    public function test_compra_parcelada_sem_limite_nao_grava_nenhuma_parcela(): void
+    {
+        $token = $this->autenticar('parcelada-limite@exemplo.test');
+        $conta = $this->conta($token, 'Conta');
+        $cartao = $this->cartao($token, $conta, 'Cartão', '99.99');
+
+        $this->withToken($token)->postJson('/api/v1/transacoes', [
+            ...$this->dadosCompra($cartao, '2026-10-07', '100.00'),
+            'quantidade_parcelas' => 3,
+        ])->assertUnprocessable()->assertJsonPath('erros.valor.0', 'Limite insuficiente no cartão.');
+
+        $this->assertDatabaseCount('transacoes', 0);
+        $this->assertDatabaseCount('faturas_cartao', 1);
+    }
+
+    public function test_parcelamento_manual_valida_tipo_de_conta_e_valor_minimo_por_parcela(): void
+    {
+        $token = $this->autenticar('parcelada-validacao@exemplo.test');
+        $conta = $this->conta($token, 'Conta');
+        $cartao = $this->cartao($token, $conta, 'Cartão', '100.00');
+
+        $this->withToken($token)->postJson('/api/v1/transacoes', [
+            'conta_id' => $conta, 'data' => '2026-10-07', 'valor' => '-10.00',
+            'descricao' => 'Débito parcelado', 'natureza' => 'saida', 'quantidade_parcelas' => 2,
+        ])->assertUnprocessable()->assertJsonPath('erros.quantidade_parcelas.0', 'Parcelamento disponível apenas para compras no cartão.');
+
+        $this->withToken($token)->postJson('/api/v1/transacoes', [
+            ...$this->dadosCompra($cartao, '2026-10-07', '0.01'), 'quantidade_parcelas' => 2,
+        ])->assertUnprocessable()->assertJsonPath('erros.quantidade_parcelas.0', 'Cada parcela deve ter valor mínimo de R$ 0,01.');
+        $this->assertDatabaseCount('transacoes', 0);
+    }
+
     public function test_limite_bloqueia_importacao_sem_gravacao_parcial(): void
     {
         $token = $this->autenticar('importacao-limite@exemplo.test');

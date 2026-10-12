@@ -46,6 +46,7 @@ export type Transacao = {
   id: string; codigo: string; conta_id: string; categoria_id: string | null; lote_id: string | null;
   transacao_relacionada_id: string | null; data_efetiva: string; valor: string;
   moeda: string; descricao_original: string; natureza: string;
+  compra_parcelada_id?: string | null; numero_parcela?: number | null; total_parcelas?: number | null;
   situacao: string; origem: string; editavel?: boolean;
 };
 

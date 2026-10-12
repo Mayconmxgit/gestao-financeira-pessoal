@@ -3,6 +3,7 @@
 namespace App\Modulos\Financeiro\Controladores;
 
 use App\Http\Controllers\Controller;
+use App\Modulos\Financeiro\Cartoes\ParceladorComprasCartao;
 use App\Modulos\Financeiro\Cartoes\ServicoFaturasCartao;
 use App\Modulos\Financeiro\Suporte\CodigoMovimentacao as Codigo;
 use App\Modulos\Financeiro\Suporte\EntradaFinanceira as Entrada;
@@ -17,7 +18,10 @@ use Illuminate\Validation\ValidationException;
 
 final class ControladorTransacoes extends Controller
 {
-    public function __construct(private readonly ServicoFaturasCartao $faturas) {}
+    public function __construct(
+        private readonly ServicoFaturasCartao $faturas,
+        private readonly ParceladorComprasCartao $parcelador,
+    ) {}
 
     public function listar(Request $requisicao): JsonResponse
     {
@@ -123,30 +127,62 @@ final class ControladorTransacoes extends Controller
         $dados = $this->validarMovimentacao($requisicao);
         $usuario = Entrada::usuario($requisicao);
         [$conta, $valor, $descricao] = $this->prepararMovimentacao($usuario, $dados);
-        $id = DB::transaction(function () use ($usuario, $conta, $dados, $valor, $descricao): int {
-            $fatura = $conta->tipo === 'cartao_credito'
-                ? $this->faturas->prepararCompra($usuario, (int) $conta->id, $valor, $dados['data']) : null;
-            $registro = $this->dadosPersistencia($usuario, $conta, $dados, $valor, $descricao, null) + [
-                'uuid' => IdentificadorPublico::novo(), 'codigo' => Codigo::novo($usuario),
-                'fatura_cartao_id' => $fatura,
-                'usuario_id' => $usuario, 'situacao' => 'confirmada', 'origem' => 'manual',
-                'created_at' => now(), 'updated_at' => now(),
-            ];
-            $id = DB::table('transacoes')->insertGetId($registro);
-            if ($fatura !== null) {
-                $this->faturas->sincronizar($fatura);
+        $quantidade = (int) ($dados['quantidade_parcelas'] ?? 1);
+        if ($quantidade > 1 && $conta->tipo !== 'cartao_credito') {
+            throw ValidationException::withMessages(['quantidade_parcelas' => 'Parcelamento disponível apenas para compras no cartão.']);
+        }
+        $totalCentavos = $quantidade > 1 ? (int) bcmul(bcsub('0', $valor, 2), '100', 0) : 0;
+        if ($quantidade > 1 && $quantidade > $totalCentavos) {
+            throw ValidationException::withMessages(['quantidade_parcelas' => 'Cada parcela deve ter valor mínimo de R$ 0,01.']);
+        }
+        $ids = DB::transaction(function () use ($usuario, $conta, $dados, $valor, $descricao, $quantidade): array {
+            $parcelas = $this->parcelador->dividir($valor, $dados['data'], $quantidade);
+            $ids = [];
+            $faturas = [];
+            foreach ($parcelas as $parcela) {
+                $dadosParcela = [...$dados, 'data' => $parcela['data'], 'valor' => $parcela['valor']];
+                $fatura = $conta->tipo === 'cartao_credito'
+                    ? $this->faturas->prepararCompra($usuario, (int) $conta->id, $parcela['valor'], $parcela['data']) : null;
+                $registro = $this->dadosPersistencia($usuario, $conta, $dadosParcela, $parcela['valor'], $descricao, null) + [
+                    'uuid' => IdentificadorPublico::novo(), 'codigo' => Codigo::novo($usuario),
+                    'fatura_cartao_id' => $fatura, 'compra_parcelada_id' => $parcela['compra_parcelada_id'],
+                    'numero_parcela' => $quantidade > 1 ? $parcela['numero'] : null,
+                    'total_parcelas' => $quantidade > 1 ? $parcela['total'] : null,
+                    'usuario_id' => $usuario, 'situacao' => 'confirmada', 'origem' => 'manual',
+                    'created_at' => now(), 'updated_at' => now(),
+                ];
+                $id = DB::table('transacoes')->insertGetId($registro);
+                $ids[] = $id;
+                if ($fatura !== null) {
+                    $faturas[] = $fatura;
+                }
+                Entrada::auditar($usuario, 'transacao_criada', 'transacoes', $id, [
+                    'compra_parcelada_id' => $parcela['compra_parcelada_id'],
+                    'numero_parcela' => $quantidade > 1 ? $parcela['numero'] : null,
+                    'total_parcelas' => $quantidade > 1 ? $parcela['total'] : null,
+                ]);
             }
-            Entrada::auditar($usuario, 'transacao_criada', 'transacoes', $id);
+            foreach (array_unique($faturas) as $fatura) {
+                $this->faturas->sincronizar((int) $fatura);
+            }
 
-            return $id;
+            return $ids;
         });
 
-        return response()->json(DB::table('transacoes')->find($id), 201);
+        $transacao = DB::table('transacoes')->find($ids[0]);
+        if ($quantidade > 1) {
+            $transacao->parcelas_compra = DB::table('transacoes')->whereIn('id', $ids)->orderBy('numero_parcela')->get();
+        }
+
+        return response()->json($transacao, 201);
     }
 
     public function editar(Request $requisicao, int $id): JsonResponse
     {
         $dados = $this->validarMovimentacao($requisicao);
+        if (($dados['quantidade_parcelas'] ?? 1) !== 1) {
+            throw ValidationException::withMessages(['quantidade_parcelas' => 'O parcelamento é definido somente na criação da compra.']);
+        }
         $usuario = Entrada::usuario($requisicao);
         DB::transaction(function () use ($usuario, $id, $dados): void {
             $transacao = DB::table('transacoes')->where('usuario_id', $usuario)
@@ -182,6 +218,7 @@ final class ControladorTransacoes extends Controller
             'descricao' => ['required', 'string', 'min:2', 'max:500'],
             'natureza' => ['required', 'in:entrada,saida,compra_cartao'],
             'categoria_id' => ['nullable', 'integer', 'min:1'],
+            'quantidade_parcelas' => ['sometimes', 'integer', 'min:1', 'max:60'],
         ]);
     }
 
