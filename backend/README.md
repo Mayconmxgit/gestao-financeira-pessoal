@@ -55,6 +55,8 @@ Erros de validação retornam HTTP 422 e um objeto `erros`. Outros erros retorna
 | `POST /transacoes/{id}/contrapartida` | `conta_contrapartida_id`, `natureza` (`transferencia`, `pagamento_fatura`) para lançamento importado. |
 | `POST /transferencias` | `origem_id`, `destino_id`, `data`, `valor` positivo, `descricao`. Pagamento ao cartão é tratado como fatura. |
 | `GET /resumo` | `inicio` e `fim` obrigatórios; `conta_id` ou `moeda` opcionais. Retorna saldos, realizado e compromissos do mês seguinte por conta e consolidado. Não soma moedas diferentes. |
+| `GET /relatorios/evolucao` | `intervalo` (`30d`, `6m`, `12m`), `referencia` e `moeda` obrigatórios. Retorna séries preenchidas por categoria, conta e cartão. |
+| `GET /relatorios/comparacao-mensal` | `mes_a`, `mes_b` (`AAAA-MM`) e `moeda` obrigatórios. Retorna valores, diferença e variação percentual entre os meses. |
 | `GET /emprestimos` / `GET /emprestimos/{id}` | Lista contratos e consulta parcelas, saldo principal, total programado e próximo vencimento. |
 | `POST /emprestimos` | Cadastra valor recebido, credor, conta, datas, taxas, juros, quantidade e sistema `price`, `sac` ou `manual`; gera o cronograma e a entrada da dívida atomicamente. |
 | `POST /emprestimos/{id}/parcelas/{parcelaId}/pagamentos` | Registra conta e data do pagamento; separa amortização de juros e taxas. |

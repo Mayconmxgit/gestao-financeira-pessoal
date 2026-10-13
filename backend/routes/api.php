@@ -11,6 +11,7 @@ use App\Modulos\Financeiro\Controladores\ControladorFaturasCartao;
 use App\Modulos\Financeiro\Controladores\ControladorImportacoes;
 use App\Modulos\Financeiro\Controladores\ControladorMetasFinanceiras;
 use App\Modulos\Financeiro\Controladores\ControladorPagamentosRecorrentes;
+use App\Modulos\Financeiro\Controladores\ControladorRelatorios;
 use App\Modulos\Financeiro\Controladores\ControladorResumo;
 use App\Modulos\Financeiro\Controladores\ControladorTransacoes;
 use App\Modulos\Usuarios\Controladores\ControladorPrivacidade;
@@ -81,6 +82,8 @@ Route::prefix('v1')->group(function (): void {
         });
         Route::middleware(['identificadores.publicos', 'assinatura:'.RecursosPlano::VISAO_GERAL])->group(function (): void {
             Route::get('/resumo', [ControladorResumo::class, 'mostrar']);
+            Route::get('/relatorios/evolucao', [ControladorRelatorios::class, 'evolucao']);
+            Route::get('/relatorios/comparacao-mensal', [ControladorRelatorios::class, 'comparacaoMensal']);
         });
         Route::middleware(['identificadores.publicos', 'assinatura:'.RecursosPlano::EMPRESTIMOS])->group(function (): void {
             Route::get('/emprestimos', [ControladorEmprestimos::class, 'listar']);

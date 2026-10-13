@@ -107,6 +107,46 @@ export type Resumo = {
   };
 };
 
+export type PeriodoRelatorio = { chave: string; rotulo: string; inicio: string; fim: string };
+export type PontoCategoriaRelatorio = { periodo: string; total: string };
+export type PontoContaRelatorio = {
+  periodo: string; entradas: string; saidas: string; resultado_liquido: string; saldo_final: string;
+};
+export type PontoCartaoRelatorio = { periodo: string; gastos: string };
+
+export type RelatorioEvolucao = {
+  intervalo: { inicio: string; fim: string; granularidade: "diaria" | "mensal"; moeda: string };
+  periodos: PeriodoRelatorio[];
+  nao_categorizado: string;
+  categorias: Array<{ categoria_id: string; nome: string; total: string; pontos: PontoCategoriaRelatorio[] }>;
+  contas: Array<{
+    conta_id: string; nome: string; tipo: string; situacao: "ativa" | "arquivada";
+    total_entradas: string; total_saidas: string; total_resultado: string; saldo_final: string;
+    pontos: PontoContaRelatorio[];
+  }>;
+  cartoes: Array<{
+    conta_id: string; nome: string; situacao: "ativa" | "arquivada";
+    total_gastos: string; pontos: PontoCartaoRelatorio[];
+  }>;
+};
+
+export type VariacaoRelatorio = {
+  valor_a: string; valor_b: string; variacao_valor: string; variacao_percentual: string | null;
+};
+
+export type RelatorioComparacao = {
+  mes_a: string; mes_b: string; moeda: string; nao_categorizado: VariacaoRelatorio;
+  categorias: Array<VariacaoRelatorio & { categoria_id: string; nome: string }>;
+  contas: Array<{
+    conta_id: string; nome: string; tipo: string; situacao: "ativa" | "arquivada";
+    entradas: VariacaoRelatorio; saidas: VariacaoRelatorio;
+    resultado: VariacaoRelatorio; saldo_final: VariacaoRelatorio;
+  }>;
+  cartoes: Array<{
+    conta_id: string; nome: string; situacao: "ativa" | "arquivada"; gastos: VariacaoRelatorio;
+  }>;
+};
+
 export type Lote = {
   id: string; conta_id: string; instituicao: string | null; nome_arquivo: string;
   formato: string; situacao: string; periodo_inicio: string | null;

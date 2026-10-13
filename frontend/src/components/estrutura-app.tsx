@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  ArrowRightLeft, ChartNoAxesCombined, ChevronDown, CircleHelp, CreditCard,
+  ArrowRightLeft, BarChart3, ChartNoAxesCombined, ChevronDown, CircleHelp, CreditCard,
   Crown, HandCoins, LayoutDashboard, LogOut, Menu, Settings2, UploadCloud, X,
 } from "lucide-react";
 import { useAutenticacao } from "@/components/autenticacao";
@@ -16,6 +16,7 @@ import type { Assinatura } from "@/lib/tipos";
 
 const navegacao = [
   { href: "/visao-geral", rotulo: "Visão geral", Icone: LayoutDashboard, recurso: RECURSOS_PLANO.VISAO_GERAL },
+  { href: "/relatorios", rotulo: "Relatórios", Icone: BarChart3, recurso: RECURSOS_PLANO.VISAO_GERAL },
   { href: "/contas", rotulo: "Minhas contas", Icone: CreditCard, recurso: RECURSOS_PLANO.CONTAS_MOVIMENTACOES },
   { href: "/movimentacoes", rotulo: "Movimentações", Icone: ArrowRightLeft, recurso: RECURSOS_PLANO.CONTAS_MOVIMENTACOES },
   { href: "/emprestimos", rotulo: "Empréstimos", Icone: HandCoins, recurso: RECURSOS_PLANO.EMPRESTIMOS },
