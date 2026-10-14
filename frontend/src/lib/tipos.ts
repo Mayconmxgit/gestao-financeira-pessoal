@@ -10,6 +10,25 @@ export type Assinatura = {
   provedor: "mercado_pago" | "cortesia" | "gratuito"; situacao: string; valor: string; moeda: string; periodicidade: string;
   recursos: string[];
   proxima_cobranca_em: string | null; periodo_acesso_fim: string | null; criada_em: string;
+  substituida_por_cortesia?: boolean;
+};
+
+export type PontoCrescimentoAdmin = {
+  periodo: string; rotulo: string; novos_usuarios: number; ativacoes: number; cancelamentos: number;
+};
+
+export type DashboardAdmin = {
+  medicao_desde: string | null;
+  periodo: { inicio: string; fim: string; intervalo: string };
+  resumo: {
+    usuarios_total: number; novos_usuarios: number; usuarios_financeiramente_ativos: number;
+    assinaturas_ativas: number; assinaturas_pagas: number; assinaturas_gratuitas: number;
+    assinaturas_cortesias: number; mrr_contratado: string; arr_projetado: string;
+    churn_percentual: string | null; conversao_percentual: string | null; falha_webhooks_percentual: string | null;
+  };
+  crescimento: PontoCrescimentoAdmin[];
+  planos: Array<{ plano: string; assinaturas: number; mrr_contratado: string }>;
+  alertas: { assinaturas_pendentes: number; assinaturas_inadimplentes: number; falhas_webhook: number };
 };
 
 export type ResumoAssinaturas = {

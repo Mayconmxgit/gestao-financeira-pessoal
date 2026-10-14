@@ -136,6 +136,22 @@ final class AssinaturasTeste extends TestCase
         $this->assertDatabaseHas('auditoria_assinaturas', [
             'administrador_id' => $admin->id, 'acao' => 'cortesia_concedida',
         ]);
+
+        $this->withToken($tokenAdmin)->getJson('/api/v1/admin/assinaturas?visao=atuais')
+            ->assertOk()
+            ->assertJsonCount(1, 'dados')
+            ->assertJsonPath('dados.0.provedor', 'cortesia');
+        $this->withToken($tokenAdmin)->getJson('/api/v1/admin/assinaturas?visao=historico')
+            ->assertOk()
+            ->assertJsonCount(2, 'dados')
+            ->assertJsonPath('dados.1.substituida_por_cortesia', true);
+
+        $this->withToken($tokenAdmin)->postJson('/api/v1/admin/assinaturas/cortesia', [
+            'usuario_id' => $usuario->uuid, 'plano_id' => $planoPremium['id'],
+            'fim' => now()->addMonths(2)->toDateString(), 'motivo' => 'Tentativa repetida de cortesia',
+        ])->assertConflict()->assertSee('ASSINATURA_EM_ANDAMENTO');
+        $this->assertDatabaseCount('assinaturas', 2);
+        $this->assertDatabaseCount('eventos_ciclo_assinatura', 3);
     }
 
     public function test_cortesia_nao_substitui_assinatura_paga_em_andamento(): void

@@ -44,7 +44,9 @@ final class ControladorAdministracaoAssinaturas extends Controller
     {
         $dados = $this->consulta($requisicao, permiteSituacao: true);
 
-        return response()->json($servico->listarAssinaturas($dados['apos'] ?? null, $dados['limite'] ?? 30, $dados['situacao'] ?? null));
+        return response()->json($servico->listarAssinaturas(
+            $dados['apos'] ?? null, $dados['limite'] ?? 30, $dados['situacao'] ?? null, $dados['visao'] ?? 'atuais'
+        ));
     }
 
     public function eventos(Request $requisicao, ServicoAdministracaoAssinaturas $servico): JsonResponse
@@ -88,6 +90,7 @@ final class ControladorAdministracaoAssinaturas extends Controller
         $regras = ['apos' => ['nullable', 'integer', 'min:1'], 'limite' => ['nullable', 'integer', 'between:1,100']];
         if ($permiteSituacao) {
             $regras['situacao'] = ['nullable', Rule::in(self::SITUACOES)];
+            $regras['visao'] = ['nullable', Rule::in(['atuais', 'historico'])];
         }
         if (array_diff(array_keys($requisicao->query()), array_keys($regras))) {
             throw ValidationException::withMessages(['campos' => 'A consulta contém campos não permitidos.']);

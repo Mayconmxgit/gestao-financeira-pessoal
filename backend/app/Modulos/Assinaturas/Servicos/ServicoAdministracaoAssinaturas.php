@@ -2,13 +2,17 @@
 
 namespace App\Modulos\Assinaturas\Servicos;
 
+use App\Modulos\Administracao\Servicos\RegistradorCicloAssinatura;
 use App\Modulos\Assinaturas\Dominio\SituacoesAssinatura;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 final class ServicoAdministracaoAssinaturas
 {
-    public function __construct(private ServicoAssinaturas $assinaturas) {}
+    public function __construct(
+        private ServicoAssinaturas $assinaturas,
+        private RegistradorCicloAssinatura $ciclo,
+    ) {}
 
     public function resumo(): array
     {
@@ -53,19 +57,33 @@ final class ServicoAdministracaoAssinaturas
         return $this->assinaturas->formatarPlano(DB::table('planos_assinatura')->where('id', $plano->id)->first());
     }
 
-    public function listarAssinaturas(?int $apos, int $limite, ?string $situacao): array
+    public function listarAssinaturas(?int $apos, int $limite, ?string $situacao, string $visao = 'atuais'): array
     {
         $consulta = $this->assinaturas->consultaAssinaturas()
             ->when($apos !== null, fn ($query) => $query->where('assinatura.id', '<', $apos))
             ->when($situacao !== null, fn ($query) => $query->where('assinatura.situacao', $situacao))
+            ->when($visao === 'atuais', fn ($query) => $query->whereIn('assinatura.situacao', [
+                'criando', 'pendente', 'ativa', 'periodo_graca', 'pausada', 'inadimplente',
+            ]))
             ->orderByDesc('assinatura.id')->limit($limite + 1)->get();
         $temProxima = $consulta->count() > $limite;
         $pagina = $consulta->take($limite);
+        $substituidas = $visao === 'historico' ? $this->assinaturasSubstituidas($pagina->pluck('id')->all()) : [];
 
         return [
-            'dados' => $pagina->map(fn (object $item) => $this->assinaturas->formatarAssinatura($item))->values(),
+            'dados' => $pagina->map(function (object $item) use ($substituidas): array {
+                return [...$this->assinaturas->formatarAssinatura($item),
+                    'substituida_por_cortesia' => isset($substituidas[$item->uuid])];
+            })->values(),
             'proximo_cursor' => $temProxima ? $pagina->last()->id : null,
         ];
+    }
+
+    private function assinaturasSubstituidas(array $ids): array
+    {
+        return DB::table('assinaturas')->whereIn('assinaturas.assinatura_substituida_id', $ids)
+            ->join('assinaturas as substituida', 'substituida.id', '=', 'assinaturas.assinatura_substituida_id')
+            ->pluck('substituida.uuid')->mapWithKeys(fn (string $uuid) => [$uuid => true])->all();
     }
 
     public function listarEventos(?int $apos, int $limite): array
@@ -100,13 +118,13 @@ final class ServicoAdministracaoAssinaturas
         DB::transaction(function () use ($administrador, $usuario, $plano, $dados, $uuid): void {
             DB::table('usuarios')->where('id', $usuario->id)->lockForUpdate()->first();
             $substituida = $this->substituirPlanoGratuito($usuario->id);
-            $this->inserirCortesia($uuid, $usuario->id, $plano, $dados['fim']);
+            $this->inserirCortesia($uuid, $usuario->id, $plano, $dados['fim'], $substituida?->id);
             $detalhes = [
                 'usuario_id' => $usuario->id, 'plano_id' => $plano->uuid, 'fim' => $dados['fim'],
                 'motivo' => $dados['motivo'],
             ];
             if ($substituida !== null) {
-                $detalhes['assinatura_substituida_uuid'] = $substituida;
+                $detalhes['assinatura_substituida_uuid'] = $substituida->uuid;
             }
             $this->auditar($administrador, 'cortesia_concedida', 'assinatura', $uuid, $detalhes);
         });
@@ -114,7 +132,7 @@ final class ServicoAdministracaoAssinaturas
         return $this->assinaturas->formatarAssinatura($this->assinaturas->consultaAssinaturas()->where('assinatura.uuid', $uuid)->first());
     }
 
-    private function substituirPlanoGratuito(int $usuario): ?string
+    private function substituirPlanoGratuito(int $usuario): ?object
     {
         $assinaturas = DB::table('assinaturas')->where('usuario_id', $usuario)
             ->whereIn('situacao', SituacoesAssinatura::EM_ANDAMENTO)->lockForUpdate()->get();
@@ -127,19 +145,22 @@ final class ServicoAdministracaoAssinaturas
         DB::table('assinaturas')->where('id', $assinatura->id)->update([
             'situacao' => 'cancelada', 'cancelada_em' => now(), 'updated_at' => now(),
         ]);
+        $this->ciclo->registrar($assinatura->id, $assinatura->situacao, 'cancelada', 'cortesia');
 
-        return $assinatura->uuid;
+        return $assinatura;
     }
 
-    private function inserirCortesia(string $uuid, int $usuario, object $plano, string $fim): void
+    private function inserirCortesia(string $uuid, int $usuario, object $plano, string $fim, ?int $substituida): void
     {
-        DB::table('assinaturas')->insert([
+        $assinaturaId = DB::table('assinaturas')->insertGetId([
             'uuid' => $uuid, 'usuario_id' => $usuario, 'plano_id' => $plano->id,
+            'assinatura_substituida_id' => $substituida,
             'provedor' => 'cortesia', 'referencia_externa' => (string) Str::uuid(), 'situacao' => 'ativa',
             'valor_contratado' => '0.00', 'moeda' => $plano->moeda, 'periodicidade' => $plano->periodicidade,
             'intervalo' => $plano->intervalo, 'periodo_acesso_fim' => $fim,
             'created_at' => now(), 'updated_at' => now(),
         ]);
+        $this->ciclo->registrar($assinaturaId, null, 'ativa', 'cortesia');
     }
 
     private function dadosPlano(array $dados): array

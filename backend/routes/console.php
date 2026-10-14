@@ -1,5 +1,6 @@
 <?php
 
+use App\Modulos\Administracao\Servicos\ServicoSnapshotAdministrativo;
 use App\Modulos\Financeiro\Cartoes\ServicoFaturasCartao;
 use App\Modulos\Financeiro\Planejamento\ServicoPagamentosRecorrentes;
 use Illuminate\Foundation\Inspiring;
@@ -30,3 +31,11 @@ Artisan::command('financeiro:fechar-faturas-cartao', function (ServicoFaturasCar
 
 Schedule::command('financeiro:fechar-faturas-cartao')
     ->dailyAt('00:05')->timezone('America/Sao_Paulo')->name('fechamento-faturas-cartao')->withoutOverlapping();
+
+Artisan::command('admin:capturar-metricas', function (ServicoSnapshotAdministrativo $servico): void {
+    $servico->capturar(now(config('app.timezone')));
+    $this->info('Snapshot administrativo atualizado.');
+})->purpose('Captura métricas agregadas e idempotentes do backoffice');
+
+Schedule::command('admin:capturar-metricas')->dailyAt('00:10')->timezone('America/Sao_Paulo')
+    ->name('metricas-administrativas-diarias')->withoutOverlapping();

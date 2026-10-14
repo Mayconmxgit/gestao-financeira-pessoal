@@ -1,5 +1,6 @@
 <?php
 
+use App\Modulos\Administracao\Controladores\ControladorAdministracao;
 use App\Modulos\Assinaturas\Controladores\ControladorAdministracaoAssinaturas;
 use App\Modulos\Assinaturas\Controladores\ControladorAssinaturas;
 use App\Modulos\Assinaturas\Controladores\ControladorWebhookMercadoPago;
@@ -47,6 +48,15 @@ Route::prefix('v1')->group(function (): void {
             Route::post('/cortesia', [ControladorAdministracaoAssinaturas::class, 'cortesia']);
             Route::post('/{uuid}/reconciliacao', [ControladorAdministracaoAssinaturas::class, 'reconciliar']);
             Route::get('/eventos', [ControladorAdministracaoAssinaturas::class, 'eventos']);
+        });
+
+        Route::prefix('admin')->middleware('administrador')->group(function (): void {
+            Route::get('/dashboard', [ControladorAdministracao::class, 'dashboard']);
+            Route::get('/usuarios/exportacao.csv', [ControladorAdministracao::class, 'exportarUsuarios']);
+            Route::get('/usuarios', [ControladorAdministracao::class, 'usuarios']);
+            Route::get('/relatorios/{tipo}/exportacao.csv', [ControladorAdministracao::class, 'exportar']);
+            Route::get('/relatorios/{tipo}', [ControladorAdministracao::class, 'relatorio']);
+            Route::get('/operacoes', [ControladorAdministracao::class, 'operacoes']);
         });
 
         Route::middleware(['identificadores.publicos', 'assinatura:'.RecursosPlano::CONTAS_MOVIMENTACOES])->group(function (): void {

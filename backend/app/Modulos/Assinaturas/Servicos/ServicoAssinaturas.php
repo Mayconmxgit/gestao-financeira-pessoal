@@ -2,6 +2,7 @@
 
 namespace App\Modulos\Assinaturas\Servicos;
 
+use App\Modulos\Administracao\Servicos\RegistradorCicloAssinatura;
 use App\Modulos\Assinaturas\Dominio\SituacoesAssinatura;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -9,7 +10,10 @@ use RuntimeException;
 
 final class ServicoAssinaturas
 {
-    public function __construct(private ClienteMercadoPagoAssinaturas $mercadoPago) {}
+    public function __construct(
+        private ClienteMercadoPagoAssinaturas $mercadoPago,
+        private RegistradorCicloAssinatura $ciclo,
+    ) {}
 
     public function listarPlanosAtivos(): array
     {
@@ -35,15 +39,27 @@ final class ServicoAssinaturas
         }
         abort_unless($this->mercadoPago->disponivel(), 503);
         $dados = $this->novaAssinatura((int) $usuario->id, $plano);
-        DB::table('assinaturas')->insert($dados);
+        $assinaturaId = DB::transaction(function () use ($dados): int {
+            $id = DB::table('assinaturas')->insertGetId($dados);
+            $this->ciclo->registrar($id, null, 'criando', 'checkout');
+
+            return $id;
+        });
         try {
             $externa = $this->mercadoPago->criar($dados, $plano, $usuario);
-            DB::table('assinaturas')->where('uuid', $dados['uuid'])->update([
-                'identificador_externo' => $externa['id'], 'url_checkout' => $externa['init_point'],
-                'situacao' => $this->situacao((string) $externa['status']), 'updated_at' => now(),
-            ]);
+            $novaSituacao = $this->situacao((string) $externa['status']);
+            DB::transaction(function () use ($dados, $externa, $novaSituacao, $assinaturaId): void {
+                DB::table('assinaturas')->where('uuid', $dados['uuid'])->update([
+                    'identificador_externo' => $externa['id'], 'url_checkout' => $externa['init_point'],
+                    'situacao' => $novaSituacao, 'updated_at' => now(),
+                ]);
+                $this->ciclo->registrar($assinaturaId, 'criando', $novaSituacao, 'checkout');
+            });
         } catch (RuntimeException $excecao) {
-            DB::table('assinaturas')->where('uuid', $dados['uuid'])->update(['situacao' => 'falha', 'updated_at' => now()]);
+            DB::transaction(function () use ($dados, $assinaturaId): void {
+                DB::table('assinaturas')->where('uuid', $dados['uuid'])->update(['situacao' => 'falha', 'updated_at' => now()]);
+                $this->ciclo->registrar($assinaturaId, 'criando', 'falha', 'checkout');
+            });
             throw $excecao;
         }
 
@@ -58,7 +74,8 @@ final class ServicoAssinaturas
             $dados = $this->novaAssinatura($usuario, $plano);
             $dados['provedor'] = 'gratuito';
             $dados['situacao'] = 'ativa';
-            DB::table('assinaturas')->insert($dados);
+            $assinaturaId = DB::table('assinaturas')->insertGetId($dados);
+            $this->ciclo->registrar($assinaturaId, null, 'ativa', 'plano_gratuito');
 
             return ['assinatura_id' => $dados['uuid'], 'url_checkout' => null, 'gratuito' => true];
         });
@@ -75,7 +92,14 @@ final class ServicoAssinaturas
             return null;
         }
         $alteracoes = $this->dadosSincronizados($externa);
-        DB::table('assinaturas')->where('id', $assinatura->id)->update($alteracoes);
+        DB::transaction(function () use ($assinatura, $alteracoes): void {
+            $atual = DB::table('assinaturas')->where('id', $assinatura->id)->lockForUpdate()->first();
+            if ($atual === null) {
+                return;
+            }
+            DB::table('assinaturas')->where('id', $assinatura->id)->update($alteracoes);
+            $this->ciclo->registrar($assinatura->id, $atual->situacao, $alteracoes['situacao'], 'webhook');
+        });
 
         return ['uuid' => $assinatura->uuid, 'situacao' => $alteracoes['situacao']];
     }
