@@ -42,4 +42,16 @@ final class ControladorFaturasCartao extends Controller
             isset($dados['codigo_movimentacao']) ? Codigo::normalizar($dados['codigo_movimentacao']) : null,
         )]);
     }
+
+    public function adiantar(Request $requisicao, int $id, int $faturaId): JsonResponse
+    {
+        $dados = Entrada::validar($requisicao, [
+            'data' => ['required', 'date_format:Y-m-d', 'before_or_equal:today'],
+            'valor' => ['required', 'regex:/^[0-9]{1,15}(?:\.[0-9]{1,2})?$/'],
+        ]);
+
+        return response()->json(['fatura' => $this->faturas->adiantar(
+            Entrada::usuario($requisicao), $id, $faturaId, $dados['data'], $dados['valor'],
+        )]);
+    }
 }

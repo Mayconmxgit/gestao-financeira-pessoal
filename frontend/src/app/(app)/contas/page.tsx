@@ -74,6 +74,7 @@ export default function Contas() {
 function PainelFaturas({ conta, concluir }: { conta: Conta; concluir: () => void }) {
   const faturas = useDados<{ faturas: FaturaCartao[] }>(`financeiro/contas/${conta.id}/faturas`);
   const [pagamento, definirPagamento] = useState<FaturaCartao | null>(null);
+  const [adiantamento, definirAdiantamento] = useState<FaturaCartao | null>(null);
   const [saldoInsuficiente, definirSaldoInsuficiente] = useState<Record<string, unknown> | null>(null);
 
   return <div className="painel-faturas">
@@ -83,12 +84,47 @@ function PainelFaturas({ conta, concluir }: { conta: Conta; concluir: () => void
       <div><strong>{formatarData(fatura.inicio_periodo)} a {formatarData(fatura.fim_periodo)}</strong><small>Fecha em {formatarData(fatura.fechamento)} · vence em {formatarData(fatura.vencimento)}</small></div>
       <strong>{formatarMoeda(fatura.valor_total, conta.moeda)}</strong>
       <span className={`situacao situacao-${fatura.situacao}`}>{fatura.situacao}</span>
-      {(["fechada", "vencida"] as string[]).includes(fatura.situacao) && Number(fatura.valor_total) > 0 && <Botao type="button" variante="secundario" onClick={() => definirPagamento(fatura)}>Pagar fatura</Botao>}
+      {fatura.situacao === "aberta" && Number(fatura.valor_total) > 0.01 && <Botao type="button" variante="secundario" onClick={() => { definirPagamento(null); definirAdiantamento(fatura); }}>Adiantar valor</Botao>}
+      {(["fechada", "vencida"] as string[]).includes(fatura.situacao) && Number(fatura.valor_total) > 0 && <Botao type="button" variante="secundario" onClick={() => { definirAdiantamento(null); definirPagamento(fatura); }}>Pagar fatura</Botao>}
     </div>)}</div>
     {!faturas.carregando && !faturas.dados?.faturas.length && <Vazio titulo="Nenhuma fatura" descricao="A primeira fatura será criada automaticamente." />}
+    {adiantamento && <FormularioAdiantamentoFatura conta={conta} fatura={adiantamento} cancelar={() => definirAdiantamento(null)} concluido={() => { definirAdiantamento(null); faturas.recarregar(); concluir(); }} saldoInsuficiente={definirSaldoInsuficiente} />}
     {pagamento && <FormularioPagamentoFatura conta={conta} fatura={pagamento} cancelar={() => definirPagamento(null)} concluido={() => { definirPagamento(null); faturas.recarregar(); concluir(); }} saldoInsuficiente={definirSaldoInsuficiente} />}
-    {saldoInsuficiente && <Modal titulo="Saldo insuficiente" fechar={() => definirSaldoInsuficiente(null)}><div className="saldo-insuficiente"><Aviso>Não foi criada nenhuma movimentação. A fatura continua pendente.</Aviso><dl><div><dt>Conta</dt><dd>{String(saldoInsuficiente.conta ?? "—")}</dd></div><div><dt>Saldo disponível</dt><dd>{formatarMoeda(String(saldoInsuficiente.saldo_disponivel ?? 0), conta.moeda)}</dd></div><div><dt>Valor da fatura</dt><dd>{formatarMoeda(String(saldoInsuficiente.valor_fatura ?? 0), conta.moeda)}</dd></div><div><dt>Valor faltante</dt><dd>{formatarMoeda(String(saldoInsuficiente.valor_faltante ?? 0), conta.moeda)}</dd></div></dl></div></Modal>}
+    {saldoInsuficiente && <Modal titulo="Saldo insuficiente" fechar={() => definirSaldoInsuficiente(null)}><div className="saldo-insuficiente"><Aviso>Nenhuma movimentação foi criada. A fatura permanece pendente.</Aviso><dl><div><dt>Conta</dt><dd>{String(saldoInsuficiente.conta ?? "—")}</dd></div><div><dt>Saldo disponível</dt><dd>{formatarMoeda(String(saldoInsuficiente.saldo_disponivel ?? 0), conta.moeda)}</dd></div><div><dt>Valor solicitado</dt><dd>{formatarMoeda(String(saldoInsuficiente.valor_fatura ?? 0), conta.moeda)}</dd></div><div><dt>Valor faltante</dt><dd>{formatarMoeda(String(saldoInsuficiente.valor_faltante ?? 0), conta.moeda)}</dd></div></dl></div></Modal>}
   </div>;
+}
+
+function FormularioAdiantamentoFatura({ conta, fatura, cancelar, concluido, saldoInsuficiente }: {
+  conta: Conta; fatura: FaturaCartao; cancelar: () => void; concluido: () => void;
+  saldoInsuficiente: (detalhes: Record<string, unknown>) => void;
+}) {
+  const [data, definirData] = useState(dataHojeLocal());
+  const [valor, definirValor] = useState("");
+  const [erro, definirErro] = useState("");
+  const [enviando, definirEnviando] = useState(false);
+  const maximo = (Number(fatura.valor_total) - 0.01).toFixed(2);
+
+  async function enviar(evento: FormEvent) {
+    evento.preventDefault(); definirErro(""); definirEnviando(true);
+    try {
+      await api(`financeiro/contas/${conta.id}/faturas/${fatura.id}/adiantamentos`, {
+        method: "POST", body: JSON.stringify({ data, valor }),
+      });
+      concluido();
+    } catch (falha) {
+      if (falha instanceof ErroApi && falha.codigo === "saldo_insuficiente" && falha.detalhes) saldoInsuficiente(falha.detalhes);
+      else definirErro(mensagemErro(falha));
+    } finally { definirEnviando(false); }
+  }
+
+  return <form className="pagamento-fatura" onSubmit={enviar}>
+    <h3>Adiantar parte da fatura</h3>
+    <p>O valor será debitado de <strong>{conta.conta_pagamento_nome}</strong>, reduzirá a fatura de {formatarMoeda(fatura.valor_total, conta.moeda)} e liberará limite no cartão.</p>
+    {erro && <Aviso>{erro}</Aviso>}
+    <Campo rotulo="Valor do adiantamento" type="number" min="0.01" max={maximo} step="0.01" required value={valor} onChange={(e) => definirValor(e.target.value)} dica={`Informe até ${formatarMoeda(maximo, conta.moeda)} para manter o pagamento parcial.`} />
+    <Campo rotulo="Data do adiantamento" type="date" max={dataHojeLocal()} required value={data} onChange={(e) => definirData(e.target.value)} />
+    <div className="modal-acoes"><Botao type="button" variante="texto" onClick={cancelar}>Cancelar</Botao><Botao type="submit" carregando={enviando}>Confirmar adiantamento</Botao></div>
+  </form>;
 }
 
 function FormularioPagamentoFatura({ conta, fatura, cancelar, concluido, saldoInsuficiente }: {

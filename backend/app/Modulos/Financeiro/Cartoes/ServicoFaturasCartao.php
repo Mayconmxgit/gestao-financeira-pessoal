@@ -169,6 +169,55 @@ final class ServicoFaturasCartao
         });
     }
 
+    public function adiantar(int $usuario, int $cartaoId, int $faturaId, string $data, string $valor): array
+    {
+        return DB::transaction(function () use ($usuario, $cartaoId, $faturaId, $data, $valor): array {
+            $cartao = DB::table('contas')->where('usuario_id', $usuario)->where('id', $cartaoId)
+                ->where('tipo', 'cartao_credito')->where('situacao', 'ativa')->lockForUpdate()->first();
+            abort_if($cartao === null, 404);
+            $fatura = DB::table('faturas_cartao')->where('usuario_id', $usuario)->where('cartao_id', $cartaoId)
+                ->where('id', $faturaId)->lockForUpdate()->first();
+            abort_if($fatura === null, 404);
+            abort_unless($fatura->situacao === 'aberta' && bccomp((string) $fatura->valor_total, '0', 2) > 0, 409);
+
+            $valor = Entrada::moeda($valor);
+            if (bccomp($valor, '0', 2) <= 0) {
+                throw ValidationException::withMessages(['valor' => 'O valor deve ser maior que zero.']);
+            }
+            if (bccomp($valor, (string) $fatura->valor_total, 2) >= 0) {
+                throw ValidationException::withMessages(['valor' => 'O adiantamento deve ser menor que o valor atual da fatura.']);
+            }
+
+            $conta = DB::table('contas')->where('usuario_id', $usuario)->where('id', $fatura->conta_pagamento_id)
+                ->where('situacao', 'ativa')->where('tipo', '<>', 'cartao_credito')->lockForUpdate()->first();
+            abort_if($conta === null, 409);
+
+            $saldo = $this->saldoDisponivel($usuario, $conta, $data);
+            if (bccomp($saldo, $valor, 2) < 0) {
+                throw new SaldoInsuficiente($conta->nome, Entrada::moeda($saldo), $valor, bcsub($valor, $saldo, 2));
+            }
+
+            $debito = DB::table('transacoes')->insertGetId($this->dadosPagamento(
+                $usuario, $conta, $data, bcsub('0', $valor, 2), 'manual', 'Adiantamento de fatura',
+            ));
+            $credito = DB::table('transacoes')->insertGetId($this->dadosPagamento(
+                $usuario, $cartao, $data, $valor, 'conciliacao', 'Adiantamento de fatura',
+            ) + ['transacao_relacionada_id' => $debito, 'fatura_cartao_id' => $faturaId]);
+            DB::table('transacoes')->where('id', $debito)->update([
+                'transacao_relacionada_id' => $credito, 'updated_at' => now(),
+            ]);
+
+            $this->sincronizar($faturaId);
+            $atualizada = DB::table('faturas_cartao')->find($faturaId);
+            Entrada::auditar($usuario, 'fatura_cartao_adiantada', 'faturas_cartao', $faturaId, [
+                'valor' => $valor, 'valor_restante' => $atualizada->valor_total,
+                'transacao_pagamento_id' => $debito, 'transacao_cartao_id' => $credito,
+            ]);
+
+            return $this->apresentar($atualizada);
+        });
+    }
+
     public function resumo(int $usuario, string $moeda): array
     {
         $hoje = CarbonImmutable::today(config('app.timezone'));
@@ -280,8 +329,7 @@ final class ServicoFaturasCartao
 
     private function criarDebito(int $usuario, object $conta, object $fatura, string $data): int
     {
-        $saldo = bcadd((string) $conta->saldo_inicial, (string) DB::table('transacoes')->where('usuario_id', $usuario)
-            ->where('conta_id', $conta->id)->where('situacao', 'confirmada')->where('data_efetiva', '<=', $data)->sum('valor'), 2);
+        $saldo = $this->saldoDisponivel($usuario, $conta, $data);
         if (bccomp($saldo, (string) $fatura->valor_total, 2) < 0) {
             throw new SaldoInsuficiente($conta->nome, Entrada::moeda($saldo), Entrada::moeda((string) $fatura->valor_total), bcsub((string) $fatura->valor_total, $saldo, 2));
         }
@@ -307,10 +355,14 @@ final class ServicoFaturasCartao
         return DB::table('transacoes')->insertGetId($this->dadosPagamento($usuario, $cartao, $data, (string) $fatura->valor_total, 'conciliacao') + ['transacao_relacionada_id' => $debito]);
     }
 
-    private function dadosPagamento(int $usuario, object $conta, string $data, string $valor, string $origem): array
-    {
-        $descricao = 'Pagamento de fatura';
-
+    private function dadosPagamento(
+        int $usuario,
+        object $conta,
+        string $data,
+        string $valor,
+        string $origem,
+        string $descricao = 'Pagamento de fatura',
+    ): array {
         return [
             'uuid' => IdentificadorPublico::novo(), 'codigo' => Codigo::novo($usuario),
             'usuario_id' => $usuario, 'conta_id' => $conta->id,
@@ -320,6 +372,12 @@ final class ServicoFaturasCartao
             'natureza' => 'pagamento_fatura', 'situacao' => 'confirmada', 'origem' => $origem,
             'created_at' => now(), 'updated_at' => now(),
         ];
+    }
+
+    private function saldoDisponivel(int $usuario, object $conta, string $data): string
+    {
+        return bcadd((string) $conta->saldo_inicial, (string) DB::table('transacoes')->where('usuario_id', $usuario)
+            ->where('conta_id', $conta->id)->where('situacao', 'confirmada')->where('data_efetiva', '<=', $data)->sum('valor'), 2);
     }
 
     private function cartao(int $usuario, int $cartao): object

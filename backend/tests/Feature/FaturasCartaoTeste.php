@@ -254,6 +254,58 @@ final class FaturasCartaoTeste extends TestCase
             ->assertOk()->assertJsonPath('consolidado.saidas', '100.00')->assertJsonPath('consolidado.saldo_final', '900.00');
     }
 
+    public function test_adiantamento_parcial_reduz_fatura_libera_limite_e_registra_saida_real(): void
+    {
+        $token = $this->autenticar('adiantamento@exemplo.test');
+        $conta = $this->conta($token, 'Conta principal', '1000.00');
+        $cartao = $this->cartao($token, $conta, 'Cartão', '1000.00');
+        $this->compra($token, $cartao, '2026-10-07', '100.00');
+        $fatura = (string) DB::table('faturas_cartao')->where('valor_total', '100.00')->value('uuid');
+
+        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/adiantamentos", [
+            'data' => '2026-10-07', 'valor' => '30.00',
+        ])->assertOk()->assertJsonPath('fatura.valor_total', '70.00')->assertJsonPath('fatura.situacao', 'aberta');
+        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/adiantamentos", [
+            'data' => '2026-10-07', 'valor' => '20.00',
+        ])->assertOk()->assertJsonPath('fatura.valor_total', '50.00');
+
+        $faturaId = $this->id('faturas_cartao', $fatura);
+        $this->assertSame(2, DB::table('transacoes')->where('conta_id', $this->id('contas', $conta))
+            ->where('natureza', 'pagamento_fatura')->where('descricao_original', 'Adiantamento de fatura')->count());
+        $this->assertSame(2, DB::table('transacoes')->where('conta_id', $this->id('contas', $cartao))
+            ->where('fatura_cartao_id', $faturaId)->where('natureza', 'pagamento_fatura')->count());
+        $this->assertDatabaseHas('auditoria_financeira', [
+            'acao' => 'fatura_cartao_adiantada', 'entidade' => 'faturas_cartao', 'entidade_id' => $faturaId,
+        ]);
+        $this->assertSame('-50.00', number_format((float) DB::table('transacoes')
+            ->where('conta_id', $this->id('contas', $conta))->where('natureza', 'pagamento_fatura')->sum('valor'), 2, '.', ''));
+        $this->withToken($token)->getJson('/api/v1/contas')->assertOk()
+            ->assertJsonFragment(['id' => $cartao, 'limite_utilizado' => '50.00', 'limite_disponivel' => '950.00']);
+    }
+
+    public function test_adiantamento_exige_valor_parcial_e_saldo_sem_gravacao_incompleta(): void
+    {
+        $token = $this->autenticar('adiantamento-validacao@exemplo.test');
+        $conta = $this->conta($token, 'Conta baixa', '25.00');
+        $cartao = $this->cartao($token, $conta, 'Cartão', '1000.00');
+        $this->compra($token, $cartao, '2026-10-07', '100.00');
+        $fatura = (string) DB::table('faturas_cartao')->where('valor_total', '100.00')->value('uuid');
+        $quantidade = DB::table('transacoes')->count();
+
+        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/adiantamentos", [
+            'data' => '2026-10-07', 'valor' => '100.00',
+        ])->assertUnprocessable()->assertJsonPath('erros.valor.0', 'O adiantamento deve ser menor que o valor atual da fatura.');
+        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/adiantamentos", [
+            'data' => '2026-10-07', 'valor' => '30.00',
+        ])->assertStatus(409)->assertJson([
+            'codigo' => 'saldo_insuficiente', 'saldo_disponivel' => '25.00',
+            'valor_fatura' => '30.00', 'valor_faltante' => '5.00',
+        ]);
+
+        $this->assertSame($quantidade, DB::table('transacoes')->count());
+        $this->assertDatabaseHas('faturas_cartao', ['uuid' => $fatura, 'valor_total' => '100.00', 'situacao' => 'aberta']);
+    }
+
     public function test_pagamento_pode_vincular_debito_existente_sem_criar_nova_saida(): void
     {
         $token = $this->autenticar('conciliacao@exemplo.test');
