@@ -562,6 +562,107 @@ final class FinanceiroPessoalTeste extends TestCase
         $this->assertDatabaseCount('transacoes', 2);
     }
 
+    public function test_estorno_parcial_pode_ser_complementado_sem_ultrapassar_o_valor_original(): void
+    {
+        $token = $this->autenticar('estorno-parcial@exemplo.test');
+        $conta = $this->conta($token, 'Corrente');
+        $compra = $this->withToken($token)->postJson('/api/v1/transacoes', [
+            'conta_id' => $conta, 'data' => '2026-09-03', 'valor' => '-100.00',
+            'descricao' => 'Compra original', 'natureza' => 'saida',
+        ])->assertCreated()->json('id');
+
+        $this->withToken($token)->postJson("/api/v1/transacoes/$compra/estornos", [
+            'data' => '2026-09-04', 'valor' => '30.00', 'motivo' => 'Devolução parcial um',
+        ])->assertCreated()->assertJsonPath('valor', 30);
+        $this->withToken($token)->postJson("/api/v1/transacoes/$compra/estornos", [
+            'data' => '2026-09-05', 'valor' => '70.00', 'motivo' => 'Devolução parcial dois',
+        ])->assertCreated()->assertJsonPath('valor', 70);
+        $this->withToken($token)->postJson("/api/v1/transacoes/$compra/estornos", [
+            'data' => '2026-09-06', 'valor' => '0.01', 'motivo' => 'Valor excedente',
+        ])->assertUnprocessable();
+
+        $this->withToken($token)->getJson('/api/v1/transacoes')
+            ->assertOk()->assertJsonFragment([
+                'id' => $compra, 'valor_estornado' => '100.00',
+                'valor_estornavel' => '0.00', 'estornavel' => false,
+            ]);
+        $this->withToken($token)->getJson('/api/v1/resumo?inicio=2026-09-01&fim=2026-09-30')
+            ->assertOk()->assertJsonPath('consolidado.saldo_final', '1000.00')
+            ->assertJsonPath('consolidado.despesas', '0.00');
+        $this->assertDatabaseCount('transacoes', 3);
+    }
+
+    public function test_estorno_parcial_de_entrada_reduz_receita_com_sinal_inverso(): void
+    {
+        $token = $this->autenticar('estorno-entrada@exemplo.test');
+        $conta = $this->conta($token, 'Corrente');
+        $entrada = $this->withToken($token)->postJson('/api/v1/transacoes', [
+            'conta_id' => $conta, 'data' => '2026-09-03', 'valor' => '100.00',
+            'descricao' => 'Receita original', 'natureza' => 'entrada',
+        ])->assertCreated()->json('id');
+
+        $this->withToken($token)->postJson("/api/v1/transacoes/$entrada/estornos", [
+            'data' => '2026-09-04', 'valor' => '25.00', 'motivo' => 'Receita devolvida parcialmente',
+        ])->assertCreated()->assertJsonPath('valor', -25);
+        $this->withToken($token)->getJson('/api/v1/resumo?inicio=2026-09-01&fim=2026-09-30')
+            ->assertOk()->assertJsonPath('consolidado.saldo_final', '1075.00');
+    }
+
+    public function test_exclusao_logica_cancela_lancamento_preserva_auditoria_e_remove_efeito_do_saldo(): void
+    {
+        $token = $this->autenticar('cancelamento@exemplo.test');
+        $conta = $this->conta($token, 'Corrente');
+        $lancamento = $this->withToken($token)->postJson('/api/v1/transacoes', [
+            'conta_id' => $conta, 'data' => '2026-09-03', 'valor' => '-125.50',
+            'descricao' => 'Lançamento duplicado', 'natureza' => 'saida',
+        ])->assertCreated()->json('id');
+
+        $this->withToken($token)->deleteJson("/api/v1/transacoes/$lancamento", [
+            'motivo' => 'Lançamento duplicado',
+        ])->assertOk()->assertJsonPath('situacao', 'cancelada');
+
+        $id = (int) DB::table('transacoes')->where('uuid', $lancamento)->value('id');
+        $this->assertDatabaseHas('transacoes', [
+            'id' => $id, 'situacao' => 'cancelada', 'valor' => '-125.50',
+            'descricao_original' => 'Lançamento duplicado',
+        ]);
+        $this->assertDatabaseHas('auditoria_financeira', [
+            'usuario_id' => 1, 'acao' => 'transacao_cancelada',
+            'entidade' => 'transacoes', 'entidade_id' => $id,
+        ]);
+        $this->withToken($token)->getJson('/api/v1/resumo?inicio=2026-09-01&fim=2026-09-30')
+            ->assertOk()->assertJsonPath('consolidado.saldo_final', '1000.00')
+            ->assertJsonPath('consolidado.despesas', '0.00');
+        $this->withToken($token)->deleteJson("/api/v1/transacoes/$lancamento", [
+            'motivo' => 'Repetição inválida',
+        ])->assertConflict();
+    }
+
+    public function test_cancelamento_e_estorno_respeitam_propriedade_e_vinculos(): void
+    {
+        $ana = $this->autenticar('cancelamento-ana@exemplo.test');
+        $origem = $this->conta($ana, 'Origem');
+        $destino = $this->conta($ana, 'Destino');
+        $lancamento = $this->withToken($ana)->postJson('/api/v1/transacoes', [
+            'conta_id' => $origem, 'data' => '2026-09-03', 'valor' => '-50.00',
+            'descricao' => 'Transferência pendente', 'natureza' => 'saida',
+        ])->assertCreated()->json('id');
+        $this->withToken($ana)->postJson("/api/v1/transacoes/$lancamento/contrapartida", [
+            'conta_contrapartida_id' => $destino, 'natureza' => 'transferencia',
+        ])->assertCreated();
+
+        $bia = $this->autenticar('cancelamento-bia@exemplo.test');
+        $this->withToken($bia)->deleteJson("/api/v1/transacoes/$lancamento", [
+            'motivo' => 'Tentativa de outro usuário',
+        ])->assertNotFound();
+        $this->withToken($bia)->postJson("/api/v1/transacoes/$lancamento/estornos", [
+            'data' => '2026-09-04', 'valor' => '10.00', 'motivo' => 'Tentativa indevida',
+        ])->assertNotFound();
+        $this->withToken($ana)->deleteJson("/api/v1/transacoes/$lancamento", [
+            'motivo' => 'Vínculo não pode ser quebrado',
+        ])->assertConflict();
+    }
+
     public function test_transferencia_importada_reverte_as_duas_pontas(): void
     {
         $token = $this->autenticar('ana@exemplo.test');

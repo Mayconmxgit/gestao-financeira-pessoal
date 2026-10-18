@@ -73,6 +73,7 @@ Route::prefix('v1')->group(function (): void {
             Route::get('/transacoes', [ControladorTransacoes::class, 'listar']);
             Route::post('/transacoes', [ControladorTransacoes::class, 'criar']);
             Route::patch('/transacoes/{id}', [ControladorTransacoes::class, 'editar']);
+            Route::delete('/transacoes/{id}', [ControladorTransacoes::class, 'cancelar']);
             Route::patch('/transacoes/{id}/classificacao', [ControladorTransacoes::class, 'classificar']);
             Route::post('/transacoes/{id}/estornos', [ControladorTransacoes::class, 'estornar']);
             Route::post('/transacoes/{id}/contrapartida', [ControladorTransacoes::class, 'vincularContrapartida']);

@@ -299,12 +299,49 @@ final class ControladorTransacoes extends Controller
         $ids = $pagina->pluck('id');
         $referenciadas = DB::table('transacoes')->whereIn('transacao_relacionada_id', $ids)
             ->pluck('transacao_relacionada_id')->flip();
+        $estornos = DB::table('transacoes')->whereIn('transacao_relacionada_id', $ids)
+            ->where('natureza', 'estorno')->where('situacao', 'confirmada')
+            ->select('transacao_relacionada_id')->selectRaw('SUM(ABS(valor)) as total')
+            ->groupBy('transacao_relacionada_id')->pluck('total', 'transacao_relacionada_id');
+        $vinculadas = $this->idsComVinculosOperacionais($ids);
+        $situacoesFaturas = DB::table('faturas_cartao')->whereIn('id', $pagina->pluck('fatura_cartao_id')->filter())
+            ->pluck('situacao', 'id');
         foreach ($pagina as $transacao) {
-            $transacao->editavel = $transacao->situacao === 'confirmada'
+            $simples = $transacao->situacao === 'confirmada'
                 && in_array($transacao->natureza, ['entrada', 'saida', 'compra_cartao'], true)
-                && $transacao->transacao_relacionada_id === null
-                && ! $referenciadas->has($transacao->id);
+                && $transacao->transacao_relacionada_id === null;
+            $valorOriginal = $this->valorAbsoluto((string) $transacao->valor);
+            $valorEstornado = Entrada::moeda((string) ($estornos[$transacao->id] ?? '0'));
+            $valorRestante = bcsub($valorOriginal, $valorEstornado, 2);
+            $faturaAberta = $transacao->fatura_cartao_id === null
+                || ($situacoesFaturas[$transacao->fatura_cartao_id] ?? null) === 'aberta';
+            $transacao->valor_estornado = $valorEstornado;
+            $transacao->valor_estornavel = bccomp($valorRestante, '0', 2) > 0 ? $valorRestante : '0.00';
+            $transacao->estornavel = $simples && bccomp($valorRestante, '0', 2) > 0;
+            $transacao->cancelavel = $simples && ! $referenciadas->has($transacao->id)
+                && ! $vinculadas->has($transacao->id) && $faturaAberta;
+            $transacao->editavel = $simples && ! $referenciadas->has($transacao->id);
         }
+    }
+
+    private function idsComVinculosOperacionais(Collection $ids): Collection
+    {
+        $vinculadas = collect();
+        foreach ([
+            ['execucoes_pagamentos_recorrentes', 'transacao_id'],
+            ['aportes_metas', 'transacao_id'],
+            ['emprestimos', 'transacao_recebimento_id'],
+            ['parcelas_emprestimo', 'transacao_principal_id'],
+            ['parcelas_emprestimo', 'transacao_encargos_id'],
+            ['parcelas_emprestimo', 'transacao_pagamento_id'],
+            ['faturas_cartao', 'transacao_pagamento_id'],
+            ['faturas_cartao', 'transacao_cartao_id'],
+        ] as [$tabela, $campo]) {
+            DB::table($tabela)->whereIn($campo, $ids)->pluck($campo)
+                ->each(fn (int $id) => $vinculadas->put($id, true));
+        }
+
+        return $vinculadas;
     }
 
     public function classificar(Request $requisicao, int $id): JsonResponse
@@ -384,6 +421,7 @@ final class ControladorTransacoes extends Controller
     {
         $dados = Entrada::validar($requisicao, [
             'data' => ['required', 'date_format:Y-m-d'],
+            'valor' => ['sometimes', 'regex:/^[0-9]{1,15}(?:\.[0-9]{1,2})?$/'],
             'motivo' => ['required', 'string', 'min:5', 'max:300'],
         ]);
         $usuario = Entrada::usuario($requisicao);
@@ -393,9 +431,20 @@ final class ControladorTransacoes extends Controller
         abort_if($dados['data'] < $original->data_efetiva, 422);
         $estorno = DB::transaction(function () use ($usuario, $id, $dados): int {
             $original = DB::table('transacoes')->where('usuario_id', $usuario)->where('id', $id)->lockForUpdate()->first();
-            abort_unless($original !== null && $original->situacao === 'confirmada', 409);
-            abort_if(DB::table('transacoes')->where('transacao_relacionada_id', $id)->where('natureza', 'estorno')->exists(), 409);
-            $valor = bcsub('0', (string) $original->valor, 2);
+            abort_unless($original !== null && $original->situacao === 'confirmada'
+                && in_array($original->natureza, ['entrada', 'saida', 'compra_cartao'], true), 409);
+            $valorOriginal = $this->valorAbsoluto((string) $original->valor);
+            $valorEstornado = '0.00';
+            foreach (DB::table('transacoes')->where('transacao_relacionada_id', $id)
+                ->where('natureza', 'estorno')->where('situacao', 'confirmada')->lockForUpdate()->pluck('valor') as $valorAnterior) {
+                $valorEstornado = bcadd($valorEstornado, $this->valorAbsoluto((string) $valorAnterior), 2);
+            }
+            $restante = bcsub($valorOriginal, $valorEstornado, 2);
+            $solicitado = isset($dados['valor']) ? Entrada::moeda((string) $dados['valor']) : $restante;
+            if (bccomp($solicitado, '0', 2) <= 0 || bccomp($solicitado, $restante, 2) > 0) {
+                throw ValidationException::withMessages(['valor' => 'O valor do estorno deve ser positivo e não pode exceder o saldo estornável.']);
+            }
+            $valor = bccomp((string) $original->valor, '0', 2) < 0 ? $solicitado : bcsub('0', $solicitado, 2);
             $descricao = trim($dados['motivo']);
             $conta = Entrada::conta($usuario, (int) $original->conta_id);
             $fatura = $conta->tipo === 'cartao_credito'
@@ -416,12 +465,57 @@ final class ControladorTransacoes extends Controller
             if ($fatura !== null) {
                 $this->faturas->sincronizar($fatura);
             }
-            Entrada::auditar($usuario, 'transacao_estornada', 'transacoes', $id, ['estorno_id' => $novo, 'motivo' => $descricao]);
+            Entrada::auditar($usuario, 'transacao_estornada', 'transacoes', $id, [
+                'estorno_id' => $novo, 'valor' => $solicitado,
+                'valor_restante' => bcsub($restante, $solicitado, 2), 'motivo' => $descricao,
+            ]);
 
             return $novo;
         });
 
         return response()->json(DB::table('transacoes')->find($estorno), 201);
+    }
+
+    public function cancelar(Request $requisicao, int $id): JsonResponse
+    {
+        $dados = Entrada::validar($requisicao, [
+            'motivo' => ['required', 'string', 'min:5', 'max:300'],
+        ]);
+        $usuario = Entrada::usuario($requisicao);
+        DB::transaction(function () use ($usuario, $id, $dados): void {
+            $transacao = DB::table('transacoes')->where('usuario_id', $usuario)
+                ->where('id', $id)->lockForUpdate()->first();
+            abort_if($transacao === null, 404);
+            $this->assegurarCancelamentoPermitido($transacao);
+            DB::table('transacoes')->where('id', $id)->update([
+                'situacao' => 'cancelada', 'updated_at' => now(),
+            ]);
+            if ($transacao->fatura_cartao_id !== null) {
+                $this->faturas->sincronizar((int) $transacao->fatura_cartao_id);
+            }
+            Entrada::auditar($usuario, 'transacao_cancelada', 'transacoes', $id, [
+                'antes' => $this->dadosAuditaveis($transacao), 'motivo' => trim($dados['motivo']),
+            ]);
+        });
+
+        return response()->json(DB::table('transacoes')->find($id));
+    }
+
+    private function assegurarCancelamentoPermitido(object $transacao): void
+    {
+        $simples = $transacao->situacao === 'confirmada'
+            && in_array($transacao->natureza, ['entrada', 'saida', 'compra_cartao'], true)
+            && $transacao->transacao_relacionada_id === null;
+        $referenciada = DB::table('transacoes')->where('transacao_relacionada_id', $transacao->id)->exists();
+        $vinculada = $this->idsComVinculosOperacionais(collect([$transacao->id]))->isNotEmpty();
+        $faturaAberta = $transacao->fatura_cartao_id === null
+            || DB::table('faturas_cartao')->where('id', $transacao->fatura_cartao_id)->where('situacao', 'aberta')->exists();
+        abort_unless($simples && ! $referenciada && ! $vinculada && $faturaAberta, 409);
+    }
+
+    private function valorAbsoluto(string $valor): string
+    {
+        return bccomp($valor, '0', 2) < 0 ? bcsub('0', $valor, 2) : Entrada::moeda($valor);
     }
 
     public function vincularContrapartida(Request $requisicao, int $id): JsonResponse

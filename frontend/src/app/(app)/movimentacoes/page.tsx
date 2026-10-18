@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import {
-  ArrowDownLeft, ArrowRightLeft, ArrowUpRight, ChevronDown, Pencil, Plus, RotateCcw, Tags, X,
+  ArrowDownLeft, ArrowRightLeft, ArrowUpRight, ChevronDown, Pencil, Plus, RotateCcw, Tags, Trash2, X,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { dataHojeLocal, formatarData, formatarMoeda, intervaloMes, mensagemErro, nomesNatureza } from "@/lib/formatacao";
@@ -12,7 +12,7 @@ import { Aviso, Botao, CabecalhoPagina, Campo, Cartao, Modal, Seletor, Vazio } f
 import { MetasFinanceiras, PagamentosRecorrentes } from "@/components/planejamento-financeiro";
 import { RECURSOS_PLANO, useRecursosPlano } from "@/components/acesso-recursos-plano";
 
-type Acao = "lancamento" | "edicao" | "transferencia" | "estorno" | "contrapartida" | "categoria" | null;
+type Acao = "lancamento" | "edicao" | "transferencia" | "estorno" | "cancelamento" | "contrapartida" | "categoria" | null;
 type PaginaTransacoes = { dados: Transacao[]; proximo_cursor: string | null };
 type FiltrosHistorico = {
   inicio: string; fim: string; contaId: string; busca: string;
@@ -127,9 +127,9 @@ export default function Movimentacoes() {
             const conta = contas.dados?.dados.find((c) => c.id === item.conta_id);
             const tipoCategoria = Number(item.valor) > 0 ? "receita" : "despesa";
             const classificavel = ["entrada", "saida", "compra_cartao", "estorno"].includes(item.natureza) && item.situacao === "confirmada";
-            return <tr key={item.id}><td><div className="tabela-descricao"><span className={`movimento-icone ${Number(item.valor) >= 0 ? "entrada" : "saida"}`}>{Number(item.valor) >= 0 ? <ArrowDownLeft size={18} /> : <ArrowUpRight size={18} />}</span><span><strong>{item.descricao_original}{item.numero_parcela && item.total_parcelas ? ` · ${item.numero_parcela}/${item.total_parcelas}` : ""}</strong><small>#{item.codigo} · {nomesNatureza[item.natureza] ?? item.natureza} · {nomesOrigem[item.origem] ?? item.origem}</small></span></div></td>
+            return <tr key={item.id}><td><div className="tabela-descricao"><span className={`movimento-icone ${Number(item.valor) >= 0 ? "entrada" : "saida"}`}>{Number(item.valor) >= 0 ? <ArrowDownLeft size={18} /> : <ArrowUpRight size={18} />}</span><span><strong>{item.descricao_original}{item.numero_parcela && item.total_parcelas ? ` · ${item.numero_parcela}/${item.total_parcelas}` : ""}</strong><small>#{item.codigo} · {nomesNatureza[item.natureza] ?? item.natureza} · {nomesOrigem[item.origem] ?? item.origem}{item.situacao === "cancelada" ? " · Cancelado" : ""}</small></span></div></td>
               <td>{conta?.nome ?? "Conta"}</td><td>{classificavel ? <select className="seletor-tabela" value={item.categoria_id ?? ""} onChange={(e) => classificar(item, e.target.value)} aria-label={`Categoria de ${item.descricao_original}`}><option value="">A classificar</option>{categorias.dados?.dados.filter((c) => c.tipo === tipoCategoria).map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}</select> : <span className="etiqueta">Não se aplica</span>}</td>
-              <td>{formatarData(item.data_efetiva)}</td><td className={`tabela-valor ${Number(item.valor) >= 0 ? "valor-positivo" : ""}`}>{formatarMoeda(item.valor, item.moeda)}</td><td><div className="acoes-tabela">{item.editavel && <button onClick={() => abrir("edicao", item)} title="Editar movimentação" aria-label={`Editar ${item.descricao_original}`}><Pencil size={17} /></button>}{["entrada", "saida", "compra_cartao"].includes(item.natureza) && item.situacao === "confirmada" && <button onClick={() => abrir("estorno", item)} title="Registrar estorno"><RotateCcw size={17} /></button>}{["entrada", "saida"].includes(item.natureza) && !item.transacao_relacionada_id && <button onClick={() => abrir("contrapartida", item)} title="Vincular contrapartida"><ArrowRightLeft size={17} /></button>}</div></td></tr>;
+              <td>{formatarData(item.data_efetiva)}</td><td className={`tabela-valor ${Number(item.valor) >= 0 ? "valor-positivo" : ""}`}>{formatarMoeda(item.valor, item.moeda)}</td><td><div className="acoes-tabela">{item.editavel && <button onClick={() => abrir("edicao", item)} title="Editar movimentação" aria-label={`Editar ${item.descricao_original}`}><Pencil size={17} /></button>}{item.estornavel && <button onClick={() => abrir("estorno", item)} title="Registrar estorno parcial ou total" aria-label={`Estornar ${item.descricao_original}`}><RotateCcw size={17} /></button>}{item.cancelavel && <button onClick={() => abrir("cancelamento", item)} title="Excluir lançamento" aria-label={`Excluir ${item.descricao_original}`}><Trash2 size={17} /></button>}{["entrada", "saida"].includes(item.natureza) && item.situacao === "confirmada" && !item.transacao_relacionada_id && <button onClick={() => abrir("contrapartida", item)} title="Vincular contrapartida"><ArrowRightLeft size={17} /></button>}</div></td></tr>;
           })}</tbody></table></div> : !pagina.carregando && <Vazio titulo="Nenhum lançamento neste período" descricao="Importe um extrato ou adicione uma movimentação manual." acao={{ texto: "Importar extrato", href: "/importacoes" }} />}
           {proximo && <div className="carregar-mais"><Botao variante="secundario" onClick={carregarMais} carregando={carregandoMais}>Carregar mais <ChevronDown size={17} /></Botao></div>}
         </Cartao></>}
@@ -137,6 +137,7 @@ export default function Movimentacoes() {
     {acao === "edicao" && selecionada && <Modal titulo="Editar movimentação" fechar={() => definirAcao(null)}><FormularioMovimentacao transacao={selecionada} contas={contas.dados?.dados ?? []} categorias={categorias.dados?.dados ?? []} concluir={concluir} /></Modal>}
     {acao === "transferencia" && <Modal titulo="Transferir entre contas" fechar={() => definirAcao(null)}><FormularioTransferencia contas={contas.dados?.dados ?? []} concluir={concluir} /></Modal>}
     {acao === "estorno" && selecionada && <Modal titulo="Registrar estorno" fechar={() => definirAcao(null)}><FormularioEstorno transacao={selecionada} concluir={concluir} /></Modal>}
+    {acao === "cancelamento" && selecionada && <Modal titulo="Excluir lançamento" fechar={() => definirAcao(null)}><FormularioCancelamento transacao={selecionada} concluir={concluir} /></Modal>}
     {acao === "contrapartida" && selecionada && <Modal titulo="Vincular contrapartida" fechar={() => definirAcao(null)}><FormularioContrapartida transacao={selecionada} contas={contas.dados?.dados ?? []} concluir={concluir} /></Modal>}
     {acao === "categoria" && <Modal titulo={categoriaSelecionada ? "Editar categoria" : "Nova categoria"} fechar={() => definirAcao(null)}><FormularioCategoria categoria={categoriaSelecionada ?? undefined} concluir={concluir} /></Modal>}
   </div>;
@@ -213,18 +214,34 @@ function FormularioTransferencia({ contas, concluir }: { contas: Conta[]; conclu
 
 function FormularioEstorno({ transacao, concluir }: { transacao: Transacao; concluir: () => void }) {
   const [data, definirData] = useState(dataHojeLocal());
+  const [valor, definirValor] = useState(transacao.valor_estornavel ?? Math.abs(Number(transacao.valor)).toFixed(2));
   const [motivo, definirMotivo] = useState(""); const [erro, definirErro] = useState("");
   const [enviando, definirEnviando] = useState(false);
   async function enviar(evento: FormEvent) {
     evento.preventDefault(); definirErro(""); definirEnviando(true);
-    try { await api(`financeiro/transacoes/${transacao.id}/estornos`, { method: "POST", body: JSON.stringify({ data, motivo }) }); concluir(); }
+    try { await api(`financeiro/transacoes/${transacao.id}/estornos`, { method: "POST", body: JSON.stringify({ data, valor, motivo }) }); concluir(); }
     catch (falha) { definirErro(mensagemErro(falha)); } finally { definirEnviando(false); }
   }
-  return <form className="formulario-grade" onSubmit={enviar}><Aviso tipo="info">Um estorno vinculado inverte o efeito da movimentação original sem apagá-la.</Aviso>{erro && <Aviso>{erro}</Aviso>}
+  return <form className="formulario-grade" onSubmit={enviar}><Aviso tipo="info">Informe o valor devolvido. O lançamento original será preservado e poderá receber novos estornos até atingir o total.</Aviso>{erro && <Aviso>{erro}</Aviso>}
     <div className="resumo-formulario"><strong>{transacao.descricao_original}</strong><span>{formatarMoeda(transacao.valor, transacao.moeda)}</span></div>
-    <Campo rotulo="Data do estorno" type="date" required min={transacao.data_efetiva} value={data} onChange={(e) => definirData(e.target.value)} />
+    <div className="formulario-duas-colunas"><Campo rotulo="Valor do estorno" type="number" min="0.01" max={transacao.valor_estornavel} step="0.01" required value={valor} onChange={(e) => definirValor(e.target.value)} /><Campo rotulo="Data do estorno" type="date" required min={transacao.data_efetiva} value={data} onChange={(e) => definirData(e.target.value)} /></div>
     <Campo rotulo="Motivo" required minLength={5} maxLength={300} value={motivo} onChange={(e) => definirMotivo(e.target.value)} />
     <div className="modal-acoes"><Botao type="submit" carregando={enviando}>Registrar estorno</Botao></div>
+  </form>;
+}
+
+function FormularioCancelamento({ transacao, concluir }: { transacao: Transacao; concluir: () => void }) {
+  const [motivo, definirMotivo] = useState(""); const [erro, definirErro] = useState("");
+  const [enviando, definirEnviando] = useState(false);
+  async function enviar(evento: FormEvent) {
+    evento.preventDefault(); definirErro(""); definirEnviando(true);
+    try { await api(`financeiro/transacoes/${transacao.id}`, { method: "DELETE", body: JSON.stringify({ motivo }) }); concluir(); }
+    catch (falha) { definirErro(mensagemErro(falha)); } finally { definirEnviando(false); }
+  }
+  return <form className="formulario-grade" onSubmit={enviar}><Aviso tipo="info">O lançamento deixará de afetar saldos e relatórios, mas continuará no histórico como cancelado para auditoria.</Aviso>{erro && <Aviso>{erro}</Aviso>}
+    <div className="resumo-formulario"><strong>{transacao.descricao_original}</strong><span>{formatarMoeda(transacao.valor, transacao.moeda)}</span></div>
+    <Campo rotulo="Motivo da exclusão" required minLength={5} maxLength={300} value={motivo} onChange={(e) => definirMotivo(e.target.value)} />
+    <div className="modal-acoes"><Botao type="button" variante="texto" onClick={() => concluir()}>Voltar</Botao><Botao type="submit" variante="perigo" carregando={enviando}><Trash2 size={17} /> Confirmar exclusão</Botao></div>
   </form>;
 }
 

@@ -100,6 +100,24 @@ final class FaturasCartaoTeste extends TestCase
         $this->assertDatabaseCount('transacoes', 1);
     }
 
+    public function test_cancelamento_de_compra_em_fatura_aberta_libera_limite_e_recalcula_fatura(): void
+    {
+        $token = $this->autenticar('cancelamento-cartao@exemplo.test');
+        $conta = $this->conta($token, 'Conta');
+        $cartao = $this->cartao($token, $conta, 'Cartão', '500.00');
+        $compra = $this->compra($token, $cartao, '2026-10-07', '120.00');
+
+        $this->withToken($token)->deleteJson("/api/v1/transacoes/$compra", [
+            'motivo' => 'Compra lançada em duplicidade',
+        ])->assertOk()->assertJsonPath('situacao', 'cancelada');
+
+        $this->assertDatabaseHas('faturas_cartao', [
+            'cartao_id' => $this->id('contas', $cartao), 'valor_total' => '0.00',
+        ]);
+        $this->withToken($token)->getJson('/api/v1/contas')->assertOk()
+            ->assertJsonFragment(['id' => $cartao, 'limite_utilizado' => '0.00', 'limite_disponivel' => '500.00']);
+    }
+
     public function test_compra_manual_parcelada_distribui_total_em_faturas_mensais(): void
     {
         $token = $this->autenticar('parcelada@exemplo.test');
