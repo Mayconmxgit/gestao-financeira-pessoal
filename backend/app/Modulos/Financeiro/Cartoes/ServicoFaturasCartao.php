@@ -7,6 +7,7 @@ use App\Modulos\Financeiro\Suporte\EntradaFinanceira as Entrada;
 use App\Modulos\Financeiro\Suporte\IdentidadeTransacao as Identidade;
 use App\Modulos\Financeiro\Suporte\IdentificadorPublico;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -90,14 +91,7 @@ final class ServicoFaturasCartao
         if ($fatura === null || $fatura->situacao !== 'aberta') {
             return;
         }
-        $soma = Entrada::moeda((string) DB::table('transacoes')->where('fatura_cartao_id', $faturaId)
-            ->where('situacao', 'confirmada')->sum('valor'));
-        $valor = bcsub(bcsub('0', $soma, 2), (string) $fatura->credito_anterior, 2);
-        DB::table('faturas_cartao')->where('id', $faturaId)->update([
-            'valor_total' => bccomp($valor, '0', 2) > 0 ? $valor : '0.00',
-            'credito_proximo' => bccomp($valor, '0', 2) < 0 ? bcsub('0', $valor, 2) : '0.00',
-            'updated_at' => now(),
-        ]);
+        $this->recalcular($fatura);
     }
 
     public function fecharTodas(string $data): int
@@ -132,9 +126,24 @@ final class ServicoFaturasCartao
             ->where('id', $faturaId)->first();
         abort_if($fatura === null, 404);
 
-        return $this->apresentar($fatura) + ['transacoes' => DB::table('transacoes')
+        $transacoes = DB::table('transacoes')
             ->where('usuario_id', $usuario)->where('fatura_cartao_id', $faturaId)
-            ->orderBy('data_efetiva')->orderBy('id')->get()->all()];
+            ->orderBy('data_efetiva')->orderBy('id')->get();
+        $ids = $transacoes->pluck('id');
+        $referenciadas = DB::table('transacoes')->whereIn('transacao_relacionada_id', $ids)
+            ->pluck('transacao_relacionada_id')->flip();
+        $vinculadas = $this->idsVinculadosOperacionalmente($ids);
+        $permitida = $this->correcaoPermitida($fatura);
+        $transacoes->transform(function (object $transacao) use ($permitida, $referenciadas, $vinculadas): object {
+            $simples = $permitida && $transacao->situacao === 'confirmada' && $transacao->natureza === 'compra_cartao'
+                && $transacao->transacao_relacionada_id === null && ! $referenciadas->has($transacao->id);
+            $transacao->corrigivel = $simples;
+            $transacao->excluivel = $simples && ! $vinculadas->has($transacao->id);
+
+            return $transacao;
+        });
+
+        return $this->apresentar($fatura) + ['transacoes' => $transacoes->all()];
     }
 
     public function pagar(int $usuario, int $cartaoId, int $faturaId, string $data, ?int $transacaoId, ?string $codigoMovimentacao = null): array
@@ -218,6 +227,124 @@ final class ServicoFaturasCartao
         });
     }
 
+    public function fecharAgora(int $usuario, int $cartaoId, int $faturaId): array
+    {
+        return DB::transaction(function () use ($usuario, $cartaoId, $faturaId): array {
+            $hoje = CarbonImmutable::today(config('app.timezone'));
+            $cartao = DB::table('contas')->where('usuario_id', $usuario)->where('id', $cartaoId)
+                ->where('tipo', 'cartao_credito')->where('situacao', 'ativa')->lockForUpdate()->first();
+            abort_if($cartao === null, 404);
+            $fatura = DB::table('faturas_cartao')->where('usuario_id', $usuario)->where('cartao_id', $cartaoId)
+                ->where('id', $faturaId)->lockForUpdate()->first();
+            abort_if($fatura === null, 404);
+            abort_unless($this->fechamentoAntecipadoPermitido($fatura, $hoje), 409);
+
+            $atualizada = $this->recalcular($fatura);
+            $fechamentoOriginal = CarbonImmutable::parse($fatura->fechamento, config('app.timezone'));
+            $situacao = bccomp((string) $atualizada->valor_total, '0', 2) === 0 ? 'paga' : 'fechada';
+            DB::table('faturas_cartao')->where('id', $faturaId)->update([
+                'fim_periodo' => $hoje->toDateString(), 'fechamento' => $hoje->toDateString(),
+                'situacao' => $situacao, 'paga_em' => $situacao === 'paga' ? now() : null, 'updated_at' => now(),
+            ]);
+
+            $proximoFechamento = $this->dataNoMes($fechamentoOriginal->addMonth(), (int) $cartao->dia_fechamento);
+            $criada = DB::table('faturas_cartao')->insertOrIgnore([
+                'uuid' => IdentificadorPublico::novo(), 'usuario_id' => $usuario, 'cartao_id' => $cartaoId,
+                'conta_pagamento_id' => $cartao->conta_pagamento_id, 'inicio_periodo' => $hoje->toDateString(),
+                'fim_periodo' => $proximoFechamento->subDay()->toDateString(),
+                'fechamento' => $proximoFechamento->toDateString(),
+                'vencimento' => $this->vencimento($proximoFechamento, (int) $cartao->dia_vencimento)->toDateString(),
+                'valor_total' => '0.00', 'credito_anterior' => $atualizada->credito_proximo,
+                'credito_proximo' => '0.00', 'situacao' => 'aberta', 'created_at' => now(), 'updated_at' => now(),
+            ]);
+            $proxima = DB::table('faturas_cartao')->where('cartao_id', $cartaoId)
+                ->where('fechamento', $proximoFechamento->toDateString())->lockForUpdate()->firstOrFail();
+            if ($criada === 1) {
+                Entrada::auditar($usuario, 'fatura_cartao_criada', 'faturas_cartao', (int) $proxima->id, [
+                    'fechamento' => $proxima->fechamento, 'vencimento' => $proxima->vencimento,
+                    'origem' => 'fechamento_antecipado',
+                ]);
+            }
+            DB::table('faturas_cartao')->where('id', $proxima->id)->update([
+                'inicio_periodo' => $hoje->toDateString(), 'credito_anterior' => $atualizada->credito_proximo,
+                'updated_at' => now(),
+            ]);
+            $this->sincronizar((int) $proxima->id);
+            Entrada::auditar($usuario, 'fatura_cartao_fechada_antecipadamente', 'faturas_cartao', $faturaId, [
+                'fechamento_original' => $fatura->fechamento, 'fechamento_antecipado' => $hoje->toDateString(),
+                'proxima_fatura_id' => $proxima->id,
+            ]);
+
+            return $this->apresentar(DB::table('faturas_cartao')->find($faturaId));
+        });
+    }
+
+    public function corrigirLancamento(
+        int $usuario,
+        int $cartaoId,
+        int $faturaId,
+        int $lancamentoId,
+        string $valor,
+    ): array {
+        return DB::transaction(function () use ($usuario, $cartaoId, $faturaId, $lancamentoId, $valor): array {
+            $cartao = DB::table('contas')->where('usuario_id', $usuario)->where('id', $cartaoId)
+                ->where('tipo', 'cartao_credito')->lockForUpdate()->first();
+            abort_if($cartao === null, 404);
+            $fatura = $this->faturaParaCorrecao($usuario, $cartaoId, $faturaId);
+            $lancamento = $this->lancamentoParaCorrecao($usuario, $cartaoId, $faturaId, $lancamentoId);
+            $valor = Entrada::moeda($valor);
+            if (bccomp($valor, '0', 2) <= 0) {
+                throw ValidationException::withMessages(['valor' => 'O valor deve ser maior que zero.']);
+            }
+            $utilizadoSemAtual = bcsub($this->limiteUtilizado($usuario, $cartaoId), $this->valorAbsoluto((string) $lancamento->valor), 2);
+            if (bccomp(bcadd($utilizadoSemAtual, $valor, 2), (string) $cartao->limite_credito, 2) > 0) {
+                throw ValidationException::withMessages(['valor' => 'Limite insuficiente no cartão.']);
+            }
+            $novoValor = bcsub('0', $valor, 2);
+            DB::table('transacoes')->where('id', $lancamentoId)->update([
+                'valor' => $novoValor,
+                'fingerprint' => Identidade::fingerprint(
+                    $usuario, $cartaoId, $lancamento->data_efetiva, $novoValor, $lancamento->moeda,
+                    $lancamento->documento, $lancamento->descricao_original,
+                ),
+                'updated_at' => now(),
+            ]);
+            $this->recalcularCorrecao($fatura);
+            Entrada::auditar($usuario, 'fatura_cartao_lancamento_corrigido', 'transacoes', $lancamentoId, [
+                'fatura_id' => $faturaId, 'valor_anterior' => Entrada::moeda((string) $lancamento->valor),
+                'valor_atual' => $novoValor,
+            ]);
+
+            return $this->mostrar($usuario, $cartaoId, $faturaId);
+        });
+    }
+
+    public function cancelarLancamento(
+        int $usuario,
+        int $cartaoId,
+        int $faturaId,
+        int $lancamentoId,
+        string $motivo,
+    ): array {
+        return DB::transaction(function () use ($usuario, $cartaoId, $faturaId, $lancamentoId, $motivo): array {
+            $cartao = DB::table('contas')->where('usuario_id', $usuario)->where('id', $cartaoId)
+                ->where('tipo', 'cartao_credito')->lockForUpdate()->first();
+            abort_if($cartao === null, 404);
+            $fatura = $this->faturaParaCorrecao($usuario, $cartaoId, $faturaId);
+            $lancamento = $this->lancamentoParaCorrecao($usuario, $cartaoId, $faturaId, $lancamentoId);
+            abort_if($this->idsVinculadosOperacionalmente(collect([$lancamentoId]))->isNotEmpty(), 409);
+            DB::table('transacoes')->where('id', $lancamentoId)->update([
+                'situacao' => 'cancelada', 'updated_at' => now(),
+            ]);
+            $this->recalcularCorrecao($fatura);
+            Entrada::auditar($usuario, 'fatura_cartao_lancamento_cancelado', 'transacoes', $lancamentoId, [
+                'fatura_id' => $faturaId, 'valor' => $lancamento->valor, 'motivo' => $motivo,
+            ]);
+
+            return $this->mostrar($usuario, $cartaoId, $faturaId);
+        });
+    }
+
     public function resumo(int $usuario, string $moeda): array
     {
         $hoje = CarbonImmutable::today(config('app.timezone'));
@@ -271,8 +398,102 @@ final class ServicoFaturasCartao
         return $fechadas;
     }
 
+    private function recalcular(object $fatura): object
+    {
+        $soma = Entrada::moeda((string) DB::table('transacoes')->where('fatura_cartao_id', $fatura->id)
+            ->where('situacao', 'confirmada')->sum('valor'));
+        $valor = bcsub(bcsub('0', $soma, 2), (string) $fatura->credito_anterior, 2);
+        DB::table('faturas_cartao')->where('id', $fatura->id)->update([
+            'valor_total' => bccomp($valor, '0', 2) > 0 ? $valor : '0.00',
+            'credito_proximo' => bccomp($valor, '0', 2) < 0 ? bcsub('0', $valor, 2) : '0.00',
+            'updated_at' => now(),
+        ]);
+
+        return DB::table('faturas_cartao')->find($fatura->id);
+    }
+
+    private function recalcularCorrecao(object $fatura): void
+    {
+        $atualizada = $this->recalcular($fatura);
+        $proxima = DB::table('faturas_cartao')->where('cartao_id', $fatura->cartao_id)
+            ->where('fechamento', '>', $fatura->fechamento)->orderBy('fechamento')->lockForUpdate()->first();
+        if ($proxima === null || $proxima->situacao !== 'aberta') {
+            return;
+        }
+        DB::table('faturas_cartao')->where('id', $proxima->id)->update([
+            'credito_anterior' => $atualizada->credito_proximo, 'updated_at' => now(),
+        ]);
+        $this->sincronizar((int) $proxima->id);
+    }
+
+    private function faturaParaCorrecao(int $usuario, int $cartaoId, int $faturaId): object
+    {
+        $fatura = DB::table('faturas_cartao')->where('usuario_id', $usuario)->where('cartao_id', $cartaoId)
+            ->where('id', $faturaId)->lockForUpdate()->first();
+        abort_if($fatura === null, 404);
+        abort_unless($this->correcaoPermitida($fatura), 409);
+
+        return $fatura;
+    }
+
+    private function lancamentoParaCorrecao(int $usuario, int $cartaoId, int $faturaId, int $lancamentoId): object
+    {
+        $lancamento = DB::table('transacoes')->where('usuario_id', $usuario)->where('conta_id', $cartaoId)
+            ->where('fatura_cartao_id', $faturaId)->where('id', $lancamentoId)->lockForUpdate()->first();
+        abort_if($lancamento === null, 404);
+        $simples = $lancamento->situacao === 'confirmada' && $lancamento->natureza === 'compra_cartao'
+            && $lancamento->transacao_relacionada_id === null;
+        $referenciada = DB::table('transacoes')->where('transacao_relacionada_id', $lancamentoId)->exists();
+        abort_unless($simples && ! $referenciada, 409);
+
+        return $lancamento;
+    }
+
+    private function idsVinculadosOperacionalmente(Collection $ids): Collection
+    {
+        $vinculadas = collect();
+        foreach ([
+            ['execucoes_pagamentos_recorrentes', 'transacao_id'],
+            ['aportes_metas', 'transacao_id'],
+            ['emprestimos', 'transacao_recebimento_id'],
+            ['parcelas_emprestimo', 'transacao_principal_id'],
+            ['parcelas_emprestimo', 'transacao_encargos_id'],
+            ['parcelas_emprestimo', 'transacao_pagamento_id'],
+            ['faturas_cartao', 'transacao_pagamento_id'],
+            ['faturas_cartao', 'transacao_cartao_id'],
+        ] as [$tabela, $campo]) {
+            $vinculadas = $vinculadas->merge(DB::table($tabela)->whereIn($campo, $ids)->pluck($campo));
+        }
+
+        return $vinculadas->flip();
+    }
+
+    private function correcaoPermitida(object $fatura): bool
+    {
+        return $fatura->situacao === 'fechada'
+            && CarbonImmutable::today(config('app.timezone'))->lessThan(CarbonImmutable::parse($fatura->vencimento));
+    }
+
+    private function fechamentoAntecipadoPermitido(object $fatura, CarbonImmutable $hoje): bool
+    {
+        return $fatura->situacao === 'aberta'
+            && $hoje->greaterThan(CarbonImmutable::parse($fatura->inicio_periodo))
+            && $hoje->lessThan(CarbonImmutable::parse($fatura->fechamento));
+    }
+
+    private function valorAbsoluto(string $valor): string
+    {
+        return bccomp($valor, '0', 2) < 0 ? bcsub('0', $valor, 2) : Entrada::moeda($valor);
+    }
+
     private function garantirAberta(int $usuario, object $cartao, CarbonImmutable $referencia): object
     {
+        $porPeriodo = DB::table('faturas_cartao')->where('cartao_id', $cartao->id)->where('situacao', 'aberta')
+            ->where('inicio_periodo', '<=', $referencia->toDateString())
+            ->where('fim_periodo', '>=', $referencia->toDateString())->orderBy('fechamento')->first();
+        if ($porPeriodo !== null) {
+            return $porPeriodo;
+        }
         $fechamento = $this->proximoFechamento($referencia, (int) $cartao->dia_fechamento);
         $existente = DB::table('faturas_cartao')->where('cartao_id', $cartao->id)
             ->where('fechamento', $fechamento->toDateString())->first();
@@ -390,12 +611,16 @@ final class ServicoFaturasCartao
 
     private function apresentar(object $fatura): array
     {
+        $hoje = CarbonImmutable::today(config('app.timezone'));
+
         return [
             'id' => $fatura->id, 'cartao_id' => $fatura->cartao_id, 'conta_pagamento_id' => $fatura->conta_pagamento_id,
             'inicio_periodo' => $fatura->inicio_periodo, 'fim_periodo' => $fatura->fim_periodo,
             'fechamento' => $fatura->fechamento, 'vencimento' => $fatura->vencimento,
             'valor_total' => Entrada::moeda((string) $fatura->valor_total), 'situacao' => $fatura->situacao,
             'transacao_pagamento_id' => $fatura->transacao_pagamento_id, 'paga_em' => $fatura->paga_em,
+            'correcao_permitida' => $this->correcaoPermitida($fatura),
+            'fechavel' => $this->fechamentoAntecipadoPermitido($fatura, $hoje),
         ];
     }
 }

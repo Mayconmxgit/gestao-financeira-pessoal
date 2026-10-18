@@ -54,4 +54,35 @@ final class ControladorFaturasCartao extends Controller
             Entrada::usuario($requisicao), $id, $faturaId, $dados['data'], $dados['valor'],
         )]);
     }
+
+    public function fecharAgora(Request $requisicao, int $id, int $faturaId): JsonResponse
+    {
+        Entrada::validar($requisicao, []);
+
+        return response()->json(['fatura' => $this->faturas->fecharAgora(
+            Entrada::usuario($requisicao), $id, $faturaId,
+        )]);
+    }
+
+    public function corrigirLancamento(Request $requisicao, int $id, int $faturaId, int $lancamentoId): JsonResponse
+    {
+        $dados = Entrada::validar($requisicao, [
+            'valor' => ['required', 'regex:/^[0-9]{1,15}(?:\.[0-9]{1,2})?$/'],
+        ]);
+
+        return response()->json(['fatura' => $this->faturas->corrigirLancamento(
+            Entrada::usuario($requisicao), $id, $faturaId, $lancamentoId, $dados['valor'],
+        )]);
+    }
+
+    public function cancelarLancamento(Request $requisicao, int $id, int $faturaId, int $lancamentoId): JsonResponse
+    {
+        $dados = Entrada::validar($requisicao, [
+            'motivo' => ['required', 'string', 'min:5', 'max:300'],
+        ]);
+
+        return response()->json(['fatura' => $this->faturas->cancelarLancamento(
+            Entrada::usuario($requisicao), $id, $faturaId, $lancamentoId, trim($dados['motivo']),
+        )]);
+    }
 }

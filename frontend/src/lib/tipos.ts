@@ -55,6 +55,7 @@ export type FaturaCartao = {
   credito_anterior: string; credito_proximo: string;
   situacao: "aberta" | "fechada" | "vencida" | "paga";
   transacao_pagamento_id: string | null; paga_em: string | null;
+  correcao_permitida: boolean; fechavel: boolean; transacoes?: Transacao[];
 };
 
 export type Categoria = {
@@ -68,6 +69,7 @@ export type Transacao = {
   compra_parcelada_id?: string | null; numero_parcela?: number | null; total_parcelas?: number | null;
   situacao: string; origem: string; editavel?: boolean; cancelavel?: boolean; estornavel?: boolean;
   valor_estornado?: string; valor_estornavel?: string;
+  corrigivel?: boolean; excluivel?: boolean;
 };
 
 export type PagamentoRecorrente = {

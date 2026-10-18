@@ -25,7 +25,7 @@ final class PublicadorIdentificadores
         'parcelas_compra' => 'transacoes',
         'meta' => 'metas_financeiras', 'aportes' => 'aportes_metas', 'emprestimo' => 'emprestimos',
         'parcelas' => 'parcelas_emprestimo', 'proxima_parcela' => 'parcelas_emprestimo',
-        'faturas' => 'faturas_cartao',
+        'faturas' => 'faturas_cartao', 'transacoes' => 'transacoes',
         'fatura' => 'faturas_cartao', 'fatura_atual' => 'faturas_cartao',
     ];
 

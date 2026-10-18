@@ -4,7 +4,7 @@ import { FormEvent, useState } from "react";
 import { ArrowLeft, ArrowRight, CreditCard, Landmark, Plus, SlidersHorizontal, Wallet } from "lucide-react";
 import { api, ErroApi } from "@/lib/api";
 import { dataHojeLocal, formatarData, formatarMoeda, intervaloMes, mensagemErro } from "@/lib/formatacao";
-import type { Conta, FaturaCartao, Resumo } from "@/lib/tipos";
+import type { Conta, FaturaCartao, Resumo, Transacao } from "@/lib/tipos";
 import { useDados } from "@/hooks/use-dados";
 import { Aviso, Botao, CabecalhoPagina, Campo, Cartao, Modal, Seletor, Vazio } from "@/components/interface";
 
@@ -75,6 +75,8 @@ function PainelFaturas({ conta, concluir }: { conta: Conta; concluir: () => void
   const faturas = useDados<{ faturas: FaturaCartao[] }>(`financeiro/contas/${conta.id}/faturas`);
   const [pagamento, definirPagamento] = useState<FaturaCartao | null>(null);
   const [adiantamento, definirAdiantamento] = useState<FaturaCartao | null>(null);
+  const [fechamento, definirFechamento] = useState<FaturaCartao | null>(null);
+  const [correcao, definirCorrecao] = useState<FaturaCartao | null>(null);
   const [saldoInsuficiente, definirSaldoInsuficiente] = useState<Record<string, unknown> | null>(null);
 
   return <div className="painel-faturas">
@@ -84,13 +86,94 @@ function PainelFaturas({ conta, concluir }: { conta: Conta; concluir: () => void
       <div><strong>{formatarData(fatura.inicio_periodo)} a {formatarData(fatura.fim_periodo)}</strong><small>Fecha em {formatarData(fatura.fechamento)} · vence em {formatarData(fatura.vencimento)}</small></div>
       <strong>{formatarMoeda(fatura.valor_total, conta.moeda)}</strong>
       <span className={`situacao situacao-${fatura.situacao}`}>{fatura.situacao}</span>
-      {fatura.situacao === "aberta" && Number(fatura.valor_total) > 0.01 && <Botao type="button" variante="secundario" onClick={() => { definirPagamento(null); definirAdiantamento(fatura); }}>Adiantar valor</Botao>}
-      {(["fechada", "vencida"] as string[]).includes(fatura.situacao) && Number(fatura.valor_total) > 0 && <Botao type="button" variante="secundario" onClick={() => { definirAdiantamento(null); definirPagamento(fatura); }}>Pagar fatura</Botao>}
+      <div className="acoes-fatura">
+        {fatura.fechavel && <Botao type="button" variante="secundario" onClick={() => definirFechamento(fatura)}>Fechar agora</Botao>}
+        {fatura.correcao_permitida && <Botao type="button" variante="secundario" onClick={() => definirCorrecao(fatura)}>Corrigir fatura</Botao>}
+        {fatura.situacao === "aberta" && Number(fatura.valor_total) > 0.01 && <Botao type="button" variante="secundario" onClick={() => { definirPagamento(null); definirAdiantamento(fatura); }}>Adiantar valor</Botao>}
+        {(["fechada", "vencida"] as string[]).includes(fatura.situacao) && Number(fatura.valor_total) > 0 && <Botao type="button" variante="secundario" onClick={() => { definirAdiantamento(null); definirPagamento(fatura); }}>Pagar fatura</Botao>}
+      </div>
     </div>)}</div>
     {!faturas.carregando && !faturas.dados?.faturas.length && <Vazio titulo="Nenhuma fatura" descricao="A primeira fatura será criada automaticamente." />}
+    {fechamento && <FormularioFechamentoFatura conta={conta} fatura={fechamento} cancelar={() => definirFechamento(null)} concluido={() => { definirFechamento(null); faturas.recarregar(); concluir(); }} />}
+    {correcao && <PainelCorrecaoFatura conta={conta} fatura={correcao} cancelar={() => definirCorrecao(null)} atualizado={() => faturas.recarregar()} />}
     {adiantamento && <FormularioAdiantamentoFatura conta={conta} fatura={adiantamento} cancelar={() => definirAdiantamento(null)} concluido={() => { definirAdiantamento(null); faturas.recarregar(); concluir(); }} saldoInsuficiente={definirSaldoInsuficiente} />}
     {pagamento && <FormularioPagamentoFatura conta={conta} fatura={pagamento} cancelar={() => definirPagamento(null)} concluido={() => { definirPagamento(null); faturas.recarregar(); concluir(); }} saldoInsuficiente={definirSaldoInsuficiente} />}
     {saldoInsuficiente && <Modal titulo="Saldo insuficiente" fechar={() => definirSaldoInsuficiente(null)}><div className="saldo-insuficiente"><Aviso>Nenhuma movimentação foi criada. A fatura permanece pendente.</Aviso><dl><div><dt>Conta</dt><dd>{String(saldoInsuficiente.conta ?? "—")}</dd></div><div><dt>Saldo disponível</dt><dd>{formatarMoeda(String(saldoInsuficiente.saldo_disponivel ?? 0), conta.moeda)}</dd></div><div><dt>Valor solicitado</dt><dd>{formatarMoeda(String(saldoInsuficiente.valor_fatura ?? 0), conta.moeda)}</dd></div><div><dt>Valor faltante</dt><dd>{formatarMoeda(String(saldoInsuficiente.valor_faltante ?? 0), conta.moeda)}</dd></div></dl></div></Modal>}
+  </div>;
+}
+
+function FormularioFechamentoFatura({ conta, fatura, cancelar, concluido }: {
+  conta: Conta; fatura: FaturaCartao; cancelar: () => void; concluido: () => void;
+}) {
+  const [erro, definirErro] = useState("");
+  const [enviando, definirEnviando] = useState(false);
+
+  async function enviar(evento: FormEvent) {
+    evento.preventDefault(); definirErro(""); definirEnviando(true);
+    try {
+      await api(`financeiro/contas/${conta.id}/faturas/${fatura.id}/fechamento`, {
+        method: "POST", body: JSON.stringify({}),
+      });
+      concluido();
+    } catch (falha) { definirErro(mensagemErro(falha)); }
+    finally { definirEnviando(false); }
+  }
+
+  return <form className="pagamento-fatura" onSubmit={enviar}>
+    <h3>Fechar fatura agora</h3>
+    <p>A fatura de {formatarMoeda(fatura.valor_total, conta.moeda)} será encerrada hoje. Uma nova fatura será iniciada nesta data para o próximo ciclo.</p>
+    {erro && <Aviso>{erro}</Aviso>}
+    <div className="modal-acoes"><Botao type="button" variante="texto" onClick={cancelar}>Cancelar</Botao><Botao type="submit" carregando={enviando}>Confirmar fechamento</Botao></div>
+  </form>;
+}
+
+function PainelCorrecaoFatura({ conta, fatura, cancelar, atualizado }: {
+  conta: Conta; fatura: FaturaCartao; cancelar: () => void; atualizado: () => void;
+}) {
+  const detalhes = useDados<{ fatura: FaturaCartao }>(`financeiro/contas/${conta.id}/faturas/${fatura.id}`);
+  const [edicao, definirEdicao] = useState<Transacao | null>(null);
+  const [exclusao, definirExclusao] = useState<Transacao | null>(null);
+  const [valor, definirValor] = useState("");
+  const [motivo, definirMotivo] = useState("");
+  const [erro, definirErro] = useState("");
+  const [enviando, definirEnviando] = useState(false);
+
+  async function corrigir(evento: FormEvent) {
+    evento.preventDefault(); if (!edicao) return; definirErro(""); definirEnviando(true);
+    try {
+      await api(`financeiro/contas/${conta.id}/faturas/${fatura.id}/lancamentos/${edicao.id}`, {
+        method: "PATCH", body: JSON.stringify({ valor }),
+      });
+      definirEdicao(null); detalhes.recarregar(); atualizado();
+    } catch (falha) { definirErro(mensagemErro(falha)); }
+    finally { definirEnviando(false); }
+  }
+
+  async function excluir(evento: FormEvent) {
+    evento.preventDefault(); if (!exclusao) return; definirErro(""); definirEnviando(true);
+    try {
+      await api(`financeiro/contas/${conta.id}/faturas/${fatura.id}/lancamentos/${exclusao.id}`, {
+        method: "DELETE", body: JSON.stringify({ motivo }),
+      });
+      definirExclusao(null); definirMotivo(""); detalhes.recarregar(); atualizado();
+    } catch (falha) { definirErro(mensagemErro(falha)); }
+    finally { definirEnviando(false); }
+  }
+
+  const lancamentos = detalhes.dados?.fatura.transacoes ?? [];
+  return <div className="pagamento-fatura">
+    <h3>Corrigir fatura</h3>
+    <p>Disponível somente após o fechamento e antes do vencimento. Exclusões permanecem registradas como canceladas para auditoria.</p>
+    {detalhes.erro && <Aviso>{detalhes.erro}</Aviso>}{erro && <Aviso>{erro}</Aviso>}
+    <div className="lista-faturas">{lancamentos.map((item) => <div className="fatura-linha" key={item.id}>
+      <div><strong>{item.descricao_original}</strong><small>{formatarData(item.data_efetiva)} · {item.situacao}</small></div>
+      <strong>{formatarMoeda(String(Math.abs(Number(item.valor))), item.moeda)}</strong>
+      <div className="acoes-tabela">{item.corrigivel && <button type="button" onClick={() => { definirExclusao(null); definirEdicao(item); definirValor(Math.abs(Number(item.valor)).toFixed(2)); }} aria-label={`Editar valor de ${item.descricao_original}`}>Editar valor</button>}{item.excluivel && <button type="button" onClick={() => { definirEdicao(null); definirExclusao(item); }} aria-label={`Excluir ${item.descricao_original}`}>Excluir</button>}</div>
+    </div>)}</div>
+    {!detalhes.carregando && lancamentos.length === 0 && <Vazio titulo="Nenhum lançamento" descricao="Esta fatura não possui lançamentos para correção." />}
+    {edicao && <form onSubmit={corrigir}><h3>Editar {edicao.descricao_original}</h3><Campo rotulo="Novo valor" type="number" min="0.01" step="0.01" required value={valor} onChange={(e) => definirValor(e.target.value)} /><div className="modal-acoes"><Botao type="button" variante="texto" onClick={() => definirEdicao(null)}>Cancelar</Botao><Botao type="submit" carregando={enviando}>Salvar correção</Botao></div></form>}
+    {exclusao && <form onSubmit={excluir}><h3>Excluir {exclusao.descricao_original}</h3><Campo rotulo="Motivo da exclusão" minLength={5} maxLength={300} required value={motivo} onChange={(e) => definirMotivo(e.target.value)} /><div className="modal-acoes"><Botao type="button" variante="texto" onClick={() => definirExclusao(null)}>Cancelar</Botao><Botao type="submit" carregando={enviando}>Confirmar exclusão</Botao></div></form>}
+    <div className="modal-acoes"><Botao type="button" variante="texto" onClick={cancelar}>Voltar às faturas</Botao></div>
   </div>;
 }
 

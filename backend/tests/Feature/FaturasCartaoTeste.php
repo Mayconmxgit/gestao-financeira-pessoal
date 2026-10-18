@@ -306,6 +306,92 @@ final class FaturasCartaoTeste extends TestCase
         $this->assertDatabaseHas('faturas_cartao', ['uuid' => $fatura, 'valor_total' => '100.00', 'situacao' => 'aberta']);
     }
 
+    public function test_fechamento_antecipado_encerra_ciclo_e_inicia_proxima_fatura_na_mesma_data(): void
+    {
+        $token = $this->autenticar('fechamento-antecipado@exemplo.test');
+        $conta = $this->conta($token, 'Conta');
+        $cartao = $this->cartao($token, $conta, 'Cartão', '1000.00');
+        $this->withToken($token)->postJson('/api/v1/transacoes', [
+            ...$this->dadosCompra($cartao, '2026-10-07', '100.00'), 'quantidade_parcelas' => 2,
+        ])->assertCreated();
+        $fatura = (string) DB::table('faturas_cartao')->where('fechamento', '2026-10-10')->value('uuid');
+
+        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/fechamento")
+            ->assertOk()->assertJsonPath('fatura.situacao', 'fechada')
+            ->assertJsonPath('fatura.fechamento', '2026-10-07');
+
+        $this->assertDatabaseHas('faturas_cartao', [
+            'uuid' => $fatura, 'fim_periodo' => '2026-10-07', 'fechamento' => '2026-10-07',
+            'vencimento' => '2026-10-17', 'valor_total' => '50.00', 'situacao' => 'fechada',
+        ]);
+        $this->assertDatabaseHas('faturas_cartao', [
+            'cartao_id' => $this->id('contas', $cartao), 'inicio_periodo' => '2026-10-07',
+            'fechamento' => '2026-11-10', 'valor_total' => '50.00', 'situacao' => 'aberta',
+        ]);
+        $this->assertSame(2, DB::table('faturas_cartao')->where('cartao_id', $this->id('contas', $cartao))->count());
+        $proxima = (string) DB::table('faturas_cartao')->where('fechamento', '2026-11-10')->value('uuid');
+        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$proxima/fechamento")->assertStatus(409);
+
+        $this->compra($token, $cartao, '2026-10-07', '50.00');
+        $this->assertDatabaseHas('faturas_cartao', ['uuid' => $fatura, 'valor_total' => '50.00']);
+        $this->assertDatabaseHas('faturas_cartao', ['fechamento' => '2026-11-10', 'valor_total' => '100.00']);
+    }
+
+    public function test_correcao_antes_do_vencimento_edita_valor_e_cancela_lancamento_com_auditoria(): void
+    {
+        $token = $this->autenticar('correcao-fatura@exemplo.test');
+        $conta = $this->conta($token, 'Conta');
+        $cartao = $this->cartao($token, $conta, 'Cartão', '100.00');
+        $compraEditada = $this->compra($token, $cartao, '2026-10-07', '60.00');
+        $compraExcluida = $this->compra($token, $cartao, '2026-10-08', '40.00');
+        CarbonImmutable::setTestNow('2026-10-10 09:00:00');
+        app(ServicoFaturasCartao::class)->fecharTodas('2026-10-10');
+        CarbonImmutable::setTestNow('2026-10-11 09:00:00');
+        $fatura = (string) DB::table('faturas_cartao')->where('valor_total', '100.00')->value('uuid');
+
+        $this->withToken($token)->getJson("/api/v1/contas/$cartao/faturas/$fatura")
+            ->assertOk()->assertJsonPath('fatura.correcao_permitida', true)
+            ->assertJsonCount(2, 'fatura.transacoes');
+        $this->withToken($token)->patchJson("/api/v1/contas/$cartao/faturas/$fatura/lancamentos/$compraEditada", [
+            'valor' => '60.01',
+        ])->assertUnprocessable()->assertJsonPath('erros.valor.0', 'Limite insuficiente no cartão.');
+        $this->withToken($token)->patchJson("/api/v1/contas/$cartao/faturas/$fatura/lancamentos/$compraEditada", [
+            'valor' => '50.00',
+        ])->assertOk()->assertJsonPath('fatura.valor_total', '90.00');
+        $this->withToken($token)->deleteJson("/api/v1/contas/$cartao/faturas/$fatura/lancamentos/$compraExcluida", [
+            'motivo' => 'Compra lançada incorretamente',
+        ])->assertOk()->assertJsonPath('fatura.valor_total', '50.00');
+
+        $this->assertDatabaseHas('transacoes', ['uuid' => $compraEditada, 'valor' => '-50.00', 'situacao' => 'confirmada']);
+        $this->assertDatabaseHas('transacoes', ['uuid' => $compraExcluida, 'valor' => '-40.00', 'situacao' => 'cancelada']);
+        $this->assertDatabaseHas('auditoria_financeira', ['acao' => 'fatura_cartao_lancamento_corrigido']);
+        $this->assertDatabaseHas('auditoria_financeira', ['acao' => 'fatura_cartao_lancamento_cancelado']);
+        $this->withToken($token)->getJson('/api/v1/contas')->assertOk()
+            ->assertJsonFragment(['id' => $cartao, 'limite_utilizado' => '50.00', 'limite_disponivel' => '50.00']);
+    }
+
+    public function test_correcao_e_bloqueada_no_vencimento_sem_alterar_lancamentos(): void
+    {
+        $token = $this->autenticar('correcao-vencimento@exemplo.test');
+        $conta = $this->conta($token, 'Conta');
+        $cartao = $this->cartao($token, $conta, 'Cartão', '1000.00');
+        $compra = $this->compra($token, $cartao, '2026-10-07', '100.00');
+        CarbonImmutable::setTestNow('2026-10-10 09:00:00');
+        app(ServicoFaturasCartao::class)->fecharTodas('2026-10-10');
+        CarbonImmutable::setTestNow('2026-10-17 09:00:00');
+        $fatura = (string) DB::table('faturas_cartao')->where('valor_total', '100.00')->value('uuid');
+
+        $this->withToken($token)->patchJson("/api/v1/contas/$cartao/faturas/$fatura/lancamentos/$compra", [
+            'valor' => '80.00',
+        ])->assertStatus(409);
+        $this->withToken($token)->deleteJson("/api/v1/contas/$cartao/faturas/$fatura/lancamentos/$compra", [
+            'motivo' => 'Tentativa fora do prazo',
+        ])->assertStatus(409);
+
+        $this->assertDatabaseHas('transacoes', ['uuid' => $compra, 'valor' => '-100.00', 'situacao' => 'confirmada']);
+        $this->assertDatabaseHas('faturas_cartao', ['uuid' => $fatura, 'valor_total' => '100.00']);
+    }
+
     public function test_pagamento_pode_vincular_debito_existente_sem_criar_nova_saida(): void
     {
         $token = $this->autenticar('conciliacao@exemplo.test');

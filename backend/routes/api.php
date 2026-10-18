@@ -66,8 +66,11 @@ Route::prefix('v1')->group(function (): void {
             Route::post('/contas/{id}/ajustes', [ControladorContas::class, 'ajustar']);
             Route::get('/contas/{id}/faturas', [ControladorFaturasCartao::class, 'listar']);
             Route::get('/contas/{id}/faturas/{faturaId}', [ControladorFaturasCartao::class, 'mostrar']);
+            Route::post('/contas/{id}/faturas/{faturaId}/fechamento', [ControladorFaturasCartao::class, 'fecharAgora']);
             Route::post('/contas/{id}/faturas/{faturaId}/adiantamentos', [ControladorFaturasCartao::class, 'adiantar']);
             Route::post('/contas/{id}/faturas/{faturaId}/pagamento', [ControladorFaturasCartao::class, 'pagar']);
+            Route::patch('/contas/{id}/faturas/{faturaId}/lancamentos/{lancamentoId}', [ControladorFaturasCartao::class, 'corrigirLancamento']);
+            Route::delete('/contas/{id}/faturas/{faturaId}/lancamentos/{lancamentoId}', [ControladorFaturasCartao::class, 'cancelarLancamento']);
             Route::get('/categorias', [ControladorCategorias::class, 'listar']);
             Route::post('/categorias', [ControladorCategorias::class, 'criar']);
             Route::patch('/categorias/{id}', [ControladorCategorias::class, 'atualizar']);
