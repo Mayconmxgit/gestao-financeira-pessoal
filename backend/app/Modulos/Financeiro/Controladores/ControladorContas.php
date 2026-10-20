@@ -22,7 +22,7 @@ final class ControladorContas extends Controller
         $contas = DB::table('contas as conta')->leftJoin('contas as banco', 'banco.id', '=', 'conta.conta_pagamento_id')
             ->where('conta.usuario_id', $usuario)
             ->select('conta.id', 'conta.nome', 'conta.tipo', 'conta.moeda', 'conta.saldo_inicial',
-                DB::raw('COALESCE(banco.instituicao, conta.instituicao) as instituicao'), 'conta.situacao',
+                DB::raw('COALESCE(conta.instituicao, banco.instituicao) as instituicao'), 'conta.situacao',
                 'conta.conta_pagamento_id', 'banco.nome as conta_pagamento_nome', 'conta.limite_credito', 'conta.dia_fechamento', 'conta.dia_vencimento')
             ->orderBy('conta.id')->get();
         $contas->transform(function (object $conta) use ($usuario): object {
@@ -54,20 +54,24 @@ final class ControladorContas extends Controller
         $usuario = Entrada::usuario($requisicao);
         $cartao = $dados['tipo'] === 'cartao_credito';
         if ($cartao) {
-            if (array_intersect(array_keys($dados), ['moeda', 'saldo_inicial', 'instituicao'])) {
-                throw ValidationException::withMessages(['campos' => 'Moeda, saldo e instituição são herdados da conta vinculada.']);
+            if (array_key_exists('saldo_inicial', $dados)) {
+                throw ValidationException::withMessages(['saldo_inicial' => 'Saldo inicial não se aplica a cartão de crédito.']);
             }
-            foreach (['conta_pagamento_id', 'limite_credito', 'dia_fechamento', 'dia_vencimento'] as $campo) {
+            foreach (['limite_credito', 'dia_fechamento', 'dia_vencimento'] as $campo) {
                 if (! isset($dados[$campo])) {
                     throw ValidationException::withMessages([$campo => 'Campo obrigatório para cartão de crédito.']);
                 }
             }
-            $contaPagamento = Entrada::conta($usuario, (int) $dados['conta_pagamento_id']);
-            abort_unless($contaPagamento->tipo !== 'cartao_credito' && $contaPagamento->situacao === 'ativa', 422);
+            if (isset($dados['conta_pagamento_id'])) {
+                $contaPagamento = Entrada::conta($usuario, (int) $dados['conta_pagamento_id']);
+                abort_unless($contaPagamento->tipo !== 'cartao_credito' && $contaPagamento->situacao === 'ativa'
+                    && (! isset($dados['moeda']) || $contaPagamento->moeda === $dados['moeda']), 422);
+                $dados['moeda'] ??= $contaPagamento->moeda;
+            } elseif (! isset($dados['moeda'])) {
+                throw ValidationException::withMessages(['moeda' => 'Campo obrigatório para cartão sem conta vinculada.']);
+            }
             abort_unless(bccomp((string) $dados['limite_credito'], '0', 2) > 0, 422);
-            $dados['moeda'] = $contaPagamento->moeda;
             $dados['saldo_inicial'] = '0.00';
-            $dados['instituicao'] = null;
         } else {
             if (array_intersect(array_keys($dados), ['conta_pagamento_id', 'limite_credito', 'dia_fechamento', 'dia_vencimento'])) {
                 throw ValidationException::withMessages(['campos' => 'Configuração de fatura permitida somente para cartões.']);
@@ -86,8 +90,8 @@ final class ControladorContas extends Controller
                 'saldo_inicial' => Entrada::moeda($dados['saldo_inicial']),
                 // Mantido apenas para compatibilidade com o esquema existente; não limita lançamentos.
                 'data_saldo' => now()->toDateString(),
-                'instituicao' => $dados['instituicao'] ?? null,
-                'conta_pagamento_id' => $cartao ? $dados['conta_pagamento_id'] : null,
+                'instituicao' => isset($dados['instituicao']) ? trim($dados['instituicao']) : null,
+                'conta_pagamento_id' => $cartao ? ($dados['conta_pagamento_id'] ?? null) : null,
                 'limite_credito' => $cartao ? Entrada::moeda($dados['limite_credito']) : null,
                 'dia_fechamento' => $cartao ? $dados['dia_fechamento'] : null,
                 'dia_vencimento' => $cartao ? $dados['dia_vencimento'] : null,
@@ -113,7 +117,7 @@ final class ControladorContas extends Controller
             'nome' => ['sometimes', 'string', 'min:2', 'max:120'],
             'instituicao' => ['sometimes', 'nullable', 'string', 'max:120'],
             'situacao' => ['sometimes', 'in:ativa,arquivada'],
-            'conta_pagamento_id' => ['sometimes', 'integer', 'min:1'],
+            'conta_pagamento_id' => ['sometimes', 'nullable', 'integer', 'min:1'],
             'limite_credito' => ['sometimes', 'regex:/^[0-9]{1,15}(?:\.[0-9]{1,2})?$/'],
             'dia_fechamento' => ['sometimes', 'integer', 'between:1,31'],
             'dia_vencimento' => ['sometimes', 'integer', 'between:1,31'],
@@ -135,9 +139,8 @@ final class ControladorContas extends Controller
                 $dados['limite_credito'] = Entrada::moeda($dados['limite_credito']);
                 $this->faturas->validarNovoLimite($usuario, $id, $dados['limite_credito']);
             }
-            unset($dados['instituicao']);
-            if ($dados === []) {
-                throw ValidationException::withMessages(['instituicao' => 'A instituição do cartão é herdada da conta vinculada.']);
+            if (array_key_exists('instituicao', $dados) && $dados['instituicao'] !== null) {
+                $dados['instituicao'] = trim($dados['instituicao']);
             }
         }
         if (($dados['situacao'] ?? null) === 'arquivada') {
@@ -152,7 +155,7 @@ final class ControladorContas extends Controller
         DB::transaction(function () use ($usuario, $id, $dados, $contaAtual): void {
             DB::table('contas')->where('id', $id)->where('usuario_id', $usuario)
                 ->update([...$dados, 'updated_at' => now()]);
-            if ($contaAtual->tipo === 'cartao_credito' && isset($dados['conta_pagamento_id'])) {
+            if ($contaAtual->tipo === 'cartao_credito' && array_key_exists('conta_pagamento_id', $dados)) {
                 DB::table('faturas_cartao')->where('cartao_id', $id)->where('situacao', 'aberta')
                     ->update(['conta_pagamento_id' => $dados['conta_pagamento_id'], 'updated_at' => now()]);
             }
@@ -200,7 +203,7 @@ final class ControladorContas extends Controller
         return DB::table('contas as conta')->leftJoin('contas as banco', 'banco.id', '=', 'conta.conta_pagamento_id')
             ->where('conta.id', $id)
             ->select('conta.id', 'conta.nome', 'conta.tipo', 'conta.moeda', 'conta.saldo_inicial',
-                DB::raw('COALESCE(banco.instituicao, conta.instituicao) as instituicao'), 'conta.situacao',
+                DB::raw('COALESCE(conta.instituicao, banco.instituicao) as instituicao'), 'conta.situacao',
                 'conta.conta_pagamento_id', 'banco.nome as conta_pagamento_nome', 'conta.limite_credito', 'conta.dia_fechamento', 'conta.dia_vencimento')
             ->firstOrFail();
     }

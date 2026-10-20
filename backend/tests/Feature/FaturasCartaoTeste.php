@@ -46,8 +46,88 @@ final class FaturasCartaoTeste extends TestCase
             ]);
         $this->assertDatabaseCount('faturas_cartao', 2);
         $this->assertDatabaseHas('auditoria_financeira', ['acao' => 'fatura_cartao_criada', 'entidade' => 'faturas_cartao']);
-        $this->withToken($token)->patchJson("/api/v1/contas/$cartao", ['instituicao' => 'Outro banco'])
-            ->assertUnprocessable()->assertJsonPath('erros.instituicao.0', 'A instituição do cartão é herdada da conta vinculada.');
+        $this->withToken($token)->patchJson("/api/v1/contas/$cartao", ['instituicao' => 'Operadora do cartão'])
+            ->assertOk()->assertJsonPath('instituicao', 'Operadora do cartão');
+    }
+
+    public function test_cartao_pode_ser_criado_sem_conta_e_receber_compras(): void
+    {
+        $token = $this->autenticar('cartao-sem-conta@exemplo.test');
+
+        $cartao = $this->withToken($token)->postJson('/api/v1/contas', [
+            'nome' => 'Cartão independente', 'tipo' => 'cartao_credito', 'moeda' => 'BRL',
+            'instituicao' => 'Operadora Segura', 'limite_credito' => '1200.00',
+            'dia_fechamento' => 10, 'dia_vencimento' => 17,
+        ])->assertCreated()
+            ->assertJsonPath('conta_pagamento_id', null)
+            ->assertJsonPath('moeda', 'BRL')
+            ->assertJsonPath('instituicao', 'Operadora Segura')
+            ->json('id');
+
+        $this->compra($token, $cartao, '2026-10-07', '75.00');
+
+        $this->assertDatabaseHas('faturas_cartao', [
+            'cartao_id' => $this->id('contas', $cartao), 'conta_pagamento_id' => null,
+            'valor_total' => '75.00',
+        ]);
+        $this->withToken($token)->getJson('/api/v1/contas')->assertOk()
+            ->assertJsonFragment(['id' => $cartao, 'limite_utilizado' => '75.00']);
+        $this->withToken($token)->getJson('/api/v1/resumo?inicio=2026-10-01&fim=2026-10-31&moeda=BRL')
+            ->assertOk()->assertJsonPath('faturas_cartao.itens.0.cartao_id', $cartao)
+            ->assertJsonPath('faturas_cartao.itens.0.conta_pagamento_id', null)
+            ->assertJsonPath('faturas_cartao.itens.0.conta_pagamento_nome', null);
+    }
+
+    public function test_pagamento_escolhe_conta_e_atualiza_vinculo_sem_alterar_faturas_historicas(): void
+    {
+        $token = $this->autenticar('pagamento-com-vinculo@exemplo.test');
+        $conta = $this->conta($token, 'Conta pagadora', '1000.00');
+        $cartao = $this->withToken($token)->postJson('/api/v1/contas', [
+            'nome' => 'Cartão independente', 'tipo' => 'cartao_credito', 'moeda' => 'BRL',
+            'limite_credito' => '1000.00', 'dia_fechamento' => 10, 'dia_vencimento' => 17,
+        ])->assertCreated()->json('id');
+        $this->compra($token, $cartao, '2026-10-07', '100.00');
+        CarbonImmutable::setTestNow('2026-10-10 09:00:00');
+        app(ServicoFaturasCartao::class)->fecharTodas('2026-10-10');
+        $fatura = (string) DB::table('faturas_cartao')->where('valor_total', '100.00')->value('uuid');
+
+        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/pagamento", [
+            'data' => '2026-10-10', 'conta_pagamento_id' => $conta,
+        ])->assertOk()->assertJsonPath('fatura.situacao', 'paga')
+            ->assertJsonPath('fatura.conta_pagamento_id', $conta);
+
+        $contaId = $this->id('contas', $conta);
+        $cartaoId = $this->id('contas', $cartao);
+        $this->assertDatabaseHas('contas', ['id' => $cartaoId, 'conta_pagamento_id' => $contaId]);
+        $this->assertSame(0, DB::table('faturas_cartao')->where('cartao_id', $cartaoId)
+            ->where('situacao', 'aberta')->where('conta_pagamento_id', '<>', $contaId)->count());
+        $this->assertDatabaseHas('transacoes', [
+            'conta_id' => $contaId, 'valor' => '-100.00', 'natureza' => 'pagamento_fatura',
+        ]);
+    }
+
+    public function test_pagamento_rejeita_conta_incompativel_sem_efeitos_parciais(): void
+    {
+        $token = $this->autenticar('pagamento-invalido@exemplo.test');
+        $outroToken = $this->autenticar('pagamento-alheio@exemplo.test');
+        $contaAlheia = $this->conta($outroToken, 'Conta alheia', '1000.00');
+        $cartao = $this->withToken($token)->postJson('/api/v1/contas', [
+            'nome' => 'Cartão independente', 'tipo' => 'cartao_credito', 'moeda' => 'BRL',
+            'limite_credito' => '1000.00', 'dia_fechamento' => 10, 'dia_vencimento' => 17,
+        ])->assertCreated()->json('id');
+        $this->compra($token, $cartao, '2026-10-07', '100.00');
+        CarbonImmutable::setTestNow('2026-10-10 09:00:00');
+        app(ServicoFaturasCartao::class)->fecharTodas('2026-10-10');
+        $fatura = (string) DB::table('faturas_cartao')->where('valor_total', '100.00')->value('uuid');
+        $quantidade = DB::table('transacoes')->count();
+
+        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/pagamento", [
+            'data' => '2026-10-10', 'conta_pagamento_id' => $contaAlheia,
+        ])->assertUnprocessable();
+
+        $this->assertSame($quantidade, DB::table('transacoes')->count());
+        $this->assertDatabaseHas('contas', ['id' => $this->id('contas', $cartao), 'conta_pagamento_id' => null]);
+        $this->assertDatabaseHas('faturas_cartao', ['uuid' => $fatura, 'situacao' => 'fechada', 'conta_pagamento_id' => null]);
     }
 
     public function test_compra_no_fechamento_vai_para_proxima_fatura_e_mes_curto_e_ajustado(): void
@@ -224,7 +304,9 @@ final class FaturasCartaoTeste extends TestCase
         $fatura = (string) DB::table('faturas_cartao')->where('valor_total', '100.00')->value('uuid');
         $quantidade = DB::table('transacoes')->count();
 
-        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/pagamento", ['data' => '2026-10-10'])
+        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/pagamento", [
+            'data' => '2026-10-10', 'conta_pagamento_id' => $conta,
+        ])
             ->assertStatus(409)->assertJson([
                 'codigo' => 'saldo_insuficiente', 'conta' => 'Conta baixa', 'saldo_disponivel' => '50.00',
                 'valor_fatura' => '100.00', 'valor_faltante' => '50.00',
@@ -243,9 +325,13 @@ final class FaturasCartaoTeste extends TestCase
         app(ServicoFaturasCartao::class)->fecharTodas('2026-10-10');
         $fatura = (string) DB::table('faturas_cartao')->where('valor_total', '100.00')->value('uuid');
 
-        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/pagamento", ['data' => '2026-10-10'])
+        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/pagamento", [
+            'data' => '2026-10-10', 'conta_pagamento_id' => $conta,
+        ])
             ->assertOk()->assertJsonPath('fatura.situacao', 'paga');
-        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/pagamento", ['data' => '2026-10-10'])
+        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/pagamento", [
+            'data' => '2026-10-10', 'conta_pagamento_id' => $conta,
+        ])
             ->assertStatus(409);
         $this->assertDatabaseHas('transacoes', ['conta_id' => $this->id('contas', $conta), 'valor' => '-100.00', 'natureza' => 'pagamento_fatura']);
         $this->assertDatabaseHas('transacoes', ['conta_id' => $this->id('contas', $cartao), 'valor' => '100.00', 'natureza' => 'pagamento_fatura']);
@@ -263,10 +349,10 @@ final class FaturasCartaoTeste extends TestCase
         $fatura = (string) DB::table('faturas_cartao')->where('valor_total', '100.00')->value('uuid');
 
         $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/adiantamentos", [
-            'data' => '2026-10-07', 'valor' => '30.00',
+            'data' => '2026-10-07', 'valor' => '30.00', 'conta_pagamento_id' => $conta,
         ])->assertOk()->assertJsonPath('fatura.valor_total', '70.00')->assertJsonPath('fatura.situacao', 'aberta');
         $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/adiantamentos", [
-            'data' => '2026-10-07', 'valor' => '20.00',
+            'data' => '2026-10-07', 'valor' => '20.00', 'conta_pagamento_id' => $conta,
         ])->assertOk()->assertJsonPath('fatura.valor_total', '50.00');
 
         $faturaId = $this->id('faturas_cartao', $fatura);
@@ -293,10 +379,10 @@ final class FaturasCartaoTeste extends TestCase
         $quantidade = DB::table('transacoes')->count();
 
         $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/adiantamentos", [
-            'data' => '2026-10-07', 'valor' => '100.00',
+            'data' => '2026-10-07', 'valor' => '100.00', 'conta_pagamento_id' => $conta,
         ])->assertUnprocessable()->assertJsonPath('erros.valor.0', 'O adiantamento deve ser menor que o valor atual da fatura.');
         $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/adiantamentos", [
-            'data' => '2026-10-07', 'valor' => '30.00',
+            'data' => '2026-10-07', 'valor' => '30.00', 'conta_pagamento_id' => $conta,
         ])->assertStatus(409)->assertJson([
             'codigo' => 'saldo_insuficiente', 'saldo_disponivel' => '25.00',
             'valor_fatura' => '30.00', 'valor_faltante' => '5.00',
@@ -417,12 +503,12 @@ final class FaturasCartaoTeste extends TestCase
             'descricao' => 'Débito alheio', 'natureza' => 'saida',
         ])->assertCreated()->json('codigo');
         $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/pagamento", [
-            'data' => '2026-10-10', 'codigo_movimentacao' => "#$codigoAlheio",
+            'data' => '2026-10-10', 'conta_pagamento_id' => $conta, 'codigo_movimentacao' => "#$codigoAlheio",
         ])->assertUnprocessable()->assertJsonPath('erros.codigo_movimentacao.0', 'Código de movimentação inválido.');
         $quantidade = DB::table('transacoes')->count();
 
         $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/pagamento", [
-            'data' => '2026-10-10', 'codigo_movimentacao' => "#$codigo",
+            'data' => '2026-10-10', 'conta_pagamento_id' => $conta, 'codigo_movimentacao' => "#$codigo",
         ])->assertOk()->assertJsonPath('fatura.situacao', 'paga');
 
         $this->assertSame($quantidade + 1, DB::table('transacoes')->count());

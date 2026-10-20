@@ -50,7 +50,7 @@ export type Conta = {
 };
 
 export type FaturaCartao = {
-  id: string; cartao_id: string; conta_pagamento_id: string; inicio_periodo: string;
+  id: string; cartao_id: string; conta_pagamento_id: string | null; inicio_periodo: string;
   fim_periodo: string; fechamento: string; vencimento: string; valor_total: string;
   credito_anterior: string; credito_proximo: string;
   situacao: "aberta" | "fechada" | "vencida" | "paga";
@@ -109,7 +109,7 @@ export type Resumo = {
   faturas_cartao?: {
     total: string;
     itens: Array<{
-      cartao_id: string; cartao_nome: string; conta_pagamento_id: string; conta_pagamento_nome: string;
+      cartao_id: string; cartao_nome: string; conta_pagamento_id: string | null; conta_pagamento_nome: string | null;
       instituicao: string | null; valor: string; fechamento: string; vencimento: string;
       situacao: FaturaCartao["situacao"]; alerta: "normal" | "fechamento_proximo" | "fechada" | "vencida";
     }>;

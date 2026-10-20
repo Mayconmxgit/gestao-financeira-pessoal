@@ -534,7 +534,7 @@ final class FinanceiroPessoalTeste extends TestCase
         app(ServicoFaturasCartao::class)->fecharTodas('2026-09-10');
         $fatura = DB::table('faturas_cartao')->where('valor_total', '100.00')->value('uuid');
         $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/pagamento", [
-            'data' => '2026-09-10',
+            'data' => '2026-09-10', 'conta_pagamento_id' => $corrente,
         ])->assertOk();
         $this->withToken($token)->getJson('/api/v1/resumo?inicio=2026-09-01&fim=2026-09-30')
             ->assertOk()->assertJsonPath('consolidado.saldo_final', '900.00')

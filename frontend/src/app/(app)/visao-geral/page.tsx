@@ -24,7 +24,9 @@ export default function VisaoGeral() {
   const data = useMemo(() => new Date(`${mes}-01T12:00:00`), [mes]);
   const periodo = intervaloMes(data);
   const contas = useDados<{ dados: Conta[] }>("financeiro/contas");
-  const moedas = [...new Set(contas.dados?.dados.map((conta) => conta.moeda) ?? [])];
+  const todasContas = contas.dados?.dados ?? [];
+  const contasBancarias = todasContas.filter((conta) => conta.tipo !== "cartao_credito");
+  const moedas = [...new Set(todasContas.map((conta) => conta.moeda))];
   const moeda = moedas.includes(moedaEscolhida) ? moedaEscolhida : moedas[0] ?? "BRL";
   const resumo = useDados<Resumo>(`financeiro/resumo?inicio=${periodo.inicio}&fim=${periodo.fim}&moeda=${moeda}`);
   const totais = resumo.dados?.consolidado;
@@ -33,13 +35,14 @@ export default function VisaoGeral() {
   const gastosPorCategoria = resumo.dados?.despesas_por_categoria ?? [];
   const compromissos = resumo.dados?.compromissos_proximo_mes;
   const faturas = resumo.dados?.faturas_cartao;
+  const resumoContas = resumo.dados?.contas.filter((conta) => conta.tipo !== "cartao_credito") ?? [];
 
   return <div className="pagina-dashboard">
     <CabecalhoPagina titulo={`Olá, ${usuario?.nome.split(" ")[0] ?? "você"} 👋`}
       descricao="Acompanhe o que acontece com seu dinheiro, com clareza."
       acao={<div className="cabecalho-acoes cabecalho-acoes-visao-geral"><Botao type="button" variante="secundario" onClick={() => definirValoresOcultos((atual) => !atual)}>{valoresOcultos ? <Eye size={17} aria-hidden="true" /> : <EyeOff size={17} aria-hidden="true" />}{valoresOcultos ? "Mostrar valores" : "Ocultar valores"}</Botao>{moedas.length > 1 && <label className="filtro-mes"><span>Moeda</span><select value={moeda} onChange={(e) => definirMoeda(e.target.value)} aria-label="Selecionar moeda">{moedas.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>}<label className="filtro-mes"><span>Período</span><input type="month" value={mes} onChange={(e) => definirMes(e.target.value)} aria-label="Selecionar mês" /></label></div>} />
     {resumo.erro && <Aviso>{resumo.erro}</Aviso>}
-    {contas.dados?.dados.length === 0 ? <div className="onboarding-destaque"><div><span className="sobretitulo">COMECE POR AQUI</span><h2>Seu espaço financeiro está pronto.</h2><p>Cadastre sua primeira conta e informe o saldo inicial. Depois, importe um extrato para ver seus números ganharem vida.</p><Link href="/contas" className="botao botao-claro">Adicionar minha primeira conta <ArrowRight size={17} /></Link></div><div className="onboarding-arte"><Wallet size={76} strokeWidth={1.2} /></div></div> : null}
+    {contasBancarias.length === 0 ? <div className="onboarding-destaque"><div><span className="sobretitulo">COMECE POR AQUI</span><h2>Seu espaço financeiro está pronto.</h2><p>Cadastre sua primeira conta e informe o saldo inicial. Depois, importe um extrato para ver seus números ganharem vida.</p><Link href="/contas" className="botao botao-claro">Adicionar minha primeira conta <ArrowRight size={17} /></Link></div><div className="onboarding-arte"><Wallet size={76} strokeWidth={1.2} /></div></div> : null}
     {!!faturas?.itens.length && <AlertasFaturas faturas={faturas} moeda={moeda} valoresOcultos={valoresOcultos} />}
     <div className="metricas-grade">
       <Cartao className="metrica metrica-principal"><div className="metrica-rotulo"><span>Saldo gerencial</span><Wallet size={20} /></div><strong>{resumo.carregando ? "—" : <ValorMonetario valor={totais?.saldo_final ?? "0"} moeda={moeda} oculto={valoresOcultos} />}</strong><p>Posição consolidada em {nomeMes(data)}</p><span className="metrica-marcador">Baseado nos seus lançamentos confirmados</span></Cartao>
@@ -64,7 +67,7 @@ export default function VisaoGeral() {
     <ResumoPlanejamentoDashboard valoresOcultos={valoresOcultos} />
     <div className="dashboard-conta-unica">
       <Cartao><div className="cartao-cabecalho"><div><h2>Suas contas</h2><p>Saldo gerencial por conta</p></div><Link href="/contas" className="link-ver-todos">Gerenciar <ArrowRight size={16} /></Link></div>
-        {resumo.dados?.contas.length ? <div className="lista-contas-dashboard">{resumo.dados.contas.map((conta) => <div className="conta-resumo" key={conta.conta_id}><span className="conta-resumo-icone"><CreditCard size={19} /></span><div><strong>{conta.nome}</strong><small>{conta.tipo.replaceAll("_", " ")}</small></div><strong><ValorMonetario valor={conta.saldo_final} moeda={conta.moeda} oculto={valoresOcultos} /></strong></div>)}</div>
+        {resumoContas.length ? <div className="lista-contas-dashboard">{resumoContas.map((conta) => <div className="conta-resumo" key={conta.conta_id}><span className="conta-resumo-icone"><CreditCard size={19} /></span><div><strong>{conta.nome}</strong><small>{conta.tipo.replaceAll("_", " ")}</small></div><strong><ValorMonetario valor={conta.saldo_final} moeda={conta.moeda} oculto={valoresOcultos} /></strong></div>)}</div>
           : <Vazio titulo="Nenhuma conta cadastrada" descricao="Adicione uma conta para começar a acompanhar seus saldos." acao={{ texto: "Adicionar conta", href: "/contas" }} />}
       </Cartao>
     </div>
@@ -75,10 +78,10 @@ function AlertasFaturas({ faturas, moeda, valoresOcultos }: {
   faturas: NonNullable<Resumo["faturas_cartao"]>; moeda: string; valoresOcultos: boolean;
 }) {
   return <Cartao className="alertas-faturas">
-    <div className="cartao-cabecalho"><div><h2>Faturas dos cartões</h2><p>Total atual: <strong><ValorMonetario valor={faturas.total} moeda={moeda} oculto={valoresOcultos} /></strong></p></div><Link href="/contas" className="link-ver-todos">Ver faturas <ArrowRight size={16} /></Link></div>
+    <div className="cartao-cabecalho"><div><h2>Faturas dos cartões</h2><p>Total atual: <strong><ValorMonetario valor={faturas.total} moeda={moeda} oculto={valoresOcultos} /></strong></p></div><Link href="/cartoes" className="link-ver-todos">Ver faturas <ArrowRight size={16} /></Link></div>
     <div className="alertas-faturas-lista">{faturas.itens.map((item) => <div key={item.cartao_id} className={`alerta-fatura alerta-fatura-${item.alerta}`}>
       <span className="acao-icone acao-laranja"><CreditCard size={19} /></span>
-      <div><strong>{item.cartao_nome}</strong><small>{textoAlertaFatura(item.alerta)} · {item.conta_pagamento_nome}{item.instituicao ? ` (${item.instituicao})` : ""}</small><small>Fechamento {formatarData(item.fechamento)} · vencimento {formatarData(item.vencimento)}</small></div>
+      <div><strong>{item.cartao_nome}</strong><small>{textoAlertaFatura(item.alerta)} · {item.conta_pagamento_nome ?? "Sem conta vinculada"}{item.instituicao ? ` (${item.instituicao})` : ""}</small><small>Fechamento {formatarData(item.fechamento)} · vencimento {formatarData(item.vencimento)}</small></div>
       <strong><ValorMonetario valor={item.valor} moeda={moeda} oculto={valoresOcultos} /></strong>
     </div>)}</div>
   </Cartao>;

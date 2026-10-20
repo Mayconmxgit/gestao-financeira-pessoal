@@ -13,30 +13,35 @@ const situacoesRecorrencia = { ativo: "Ativo", pausado: "Pausado", encerrado: "E
 const situacoesMeta = { ativa: "Ativa", pausada: "Pausada", concluida: "Concluída" } as const;
 const formasPagamento = { debito: "Débito", cartao_credito: "Cartão de crédito" } as const;
 
-export function PagamentosRecorrentes({ contas, categorias }: { contas: Conta[]; categorias: Categoria[] }) {
+export function PagamentosRecorrentes({ formaPagamento, contas, categorias }: {
+  formaPagamento: PagamentoRecorrente["forma_pagamento"]; contas: Conta[]; categorias: Categoria[];
+}) {
   const lista = useDados<{ dados: PagamentoRecorrente[] }>("financeiro/pagamentos-recorrentes");
   const [editando, definirEditando] = useState<PagamentoRecorrente | null | undefined>(undefined);
   const [pagando, definirPagando] = useState<PagamentoRecorrente | null>(null);
+  const pagamentos = lista.dados?.dados.filter((item) => item.forma_pagamento === formaPagamento) ?? [];
 
   return <>
     {lista.erro && <Aviso>{lista.erro}</Aviso>}
-    <Cartao><div className="cartao-cabecalho"><div><h2>Pagamentos recorrentes</h2><p>Planeje gastos frequentes sem alterar o saldo antes do pagamento.</p></div><Botao onClick={() => definirEditando(null)}><Plus size={17} /> Novo pagamento</Botao></div>
-      {lista.dados?.dados.length ? <div className="planejamento-grade">{lista.dados.dados.map((item) => <article className="planejamento-item" key={item.id}>
+    <Cartao><div className="cartao-cabecalho"><div><h2>Pagamentos recorrentes</h2><p>{formaPagamento === "cartao_credito" ? "Compras frequentes programadas neste cartão." : "Planeje gastos frequentes debitados das suas contas."}</p></div><Botao onClick={() => definirEditando(null)}><Plus size={17} /> Novo pagamento</Botao></div>
+      {pagamentos.length ? <div className="planejamento-grade">{pagamentos.map((item) => <article className="planejamento-item" key={item.id}>
         <div className="planejamento-item-topo"><span className="planejamento-icone"><CalendarCheck size={20} /></span><div><strong>{item.descricao}</strong><small>{formasPagamento[item.forma_pagamento]} · {item.conta_nome} · {item.categoria_nome ?? "A classificar"}</small></div><span className={`etiqueta situacao-${item.situacao}`}>{situacoesRecorrencia[item.situacao]}</span></div>
         <div className="planejamento-valores"><strong>{formatarMoeda(item.valor, "BRL")}</strong><span>{periodicidades[item.periodicidade]}</span></div>
         <p>Próximo vencimento: <b>{formatarData(item.proximo_vencimento)}</b>{item.data_fim ? ` · até ${formatarData(item.data_fim)}` : ""}</p>
         {item.falha_automatica === "limite_insuficiente" && <Aviso>Limite insuficiente. O vencimento foi mantido pendente.</Aviso>}
         <div className="acoes-linha">{item.forma_pagamento === "cartao_credito" && <Botao variante="secundario" onClick={() => definirEditando(item)}><CreditCard size={16} /> {item.cobranca_automatica ? "Cartão automático" : "Cartão manual"}</Botao>}<Botao variante="secundario" onClick={() => definirEditando(item)}><Pencil size={16} /> Editar</Botao>{item.situacao === "ativo" && item.proximo_vencimento && <Botao onClick={() => definirPagando(item)}><Check size={16} /> Marcar como pago</Botao>}</div>
-      </article>)}</div> : !lista.carregando && <Vazio titulo="Nenhum pagamento recorrente" descricao="Cadastre aluguel, internet, assinaturas ou outros gastos frequentes." />}
+      </article>)}</div> : !lista.carregando && <Vazio titulo="Nenhum pagamento recorrente" descricao={formaPagamento === "cartao_credito" ? "Cadastre assinaturas e outras compras recorrentes do cartão." : "Cadastre aluguel, internet ou outros débitos frequentes."} />}
     </Cartao>
-    {editando !== undefined && <Modal titulo={editando ? "Editar pagamento recorrente" : "Novo pagamento recorrente"} fechar={() => definirEditando(undefined)}><FormularioRecorrencia pagamento={editando ?? undefined} contas={contas} categorias={categorias} concluir={() => { definirEditando(undefined); lista.recarregar(); }} /></Modal>}
+    {editando !== undefined && <Modal titulo={editando ? "Editar pagamento recorrente" : "Novo pagamento recorrente"} fechar={() => definirEditando(undefined)}><FormularioRecorrencia formaPagamento={formaPagamento} pagamento={editando ?? undefined} contas={contas} categorias={categorias} concluir={() => { definirEditando(undefined); lista.recarregar(); }} /></Modal>}
     {pagando && <Modal titulo="Confirmar pagamento" fechar={() => definirPagando(null)}><FormularioPagamentoRecorrente pagamento={pagando} concluir={() => { definirPagando(null); lista.recarregar(); }} /></Modal>}
   </>;
 }
 
-function FormularioRecorrencia({ pagamento, contas, categorias, concluir }: { pagamento?: PagamentoRecorrente; contas: Conta[]; categorias: Categoria[]; concluir: () => void }) {
+function FormularioRecorrencia({ formaPagamento, pagamento, contas, categorias, concluir }: {
+  formaPagamento: PagamentoRecorrente["forma_pagamento"];
+  pagamento?: PagamentoRecorrente; contas: Conta[]; categorias: Categoria[]; concluir: () => void;
+}) {
   const [contaId, definirConta] = useState(pagamento ? String(pagamento.conta_id) : "");
-  const [formaPagamento, definirFormaPagamento] = useState<PagamentoRecorrente["forma_pagamento"]>(pagamento?.forma_pagamento ?? "debito");
   const [cobrancaAutomatica, definirCobrancaAutomatica] = useState(Boolean(pagamento?.cobranca_automatica));
   const [categoriaId, definirCategoria] = useState(pagamento?.categoria_id ? String(pagamento.categoria_id) : "");
   const [descricao, definirDescricao] = useState(pagamento?.descricao ?? "");
@@ -51,14 +56,6 @@ function FormularioRecorrencia({ pagamento, contas, categorias, concluir }: { pa
     return conta.moeda === "BRL" && formaConta === formaPagamento && (conta.situacao === "ativa" || conta.id === pagamento?.conta_id);
   });
 
-  function alterarFormaPagamento(novaForma: PagamentoRecorrente["forma_pagamento"]) {
-    definirFormaPagamento(novaForma);
-    if (novaForma === "debito") definirCobrancaAutomatica(false);
-    const contaAtual = contas.find((conta) => conta.id === contaId);
-    const formaContaAtual = contaAtual?.tipo === "cartao_credito" ? "cartao_credito" : "debito";
-    if (contaAtual && formaContaAtual !== novaForma) definirConta("");
-  }
-
   async function enviar(evento: FormEvent) {
     evento.preventDefault(); definirEstado({ erro: "", enviando: true });
     try {
@@ -70,7 +67,6 @@ function FormularioRecorrencia({ pagamento, contas, categorias, concluir }: { pa
   }
 
   return <form className="formulario-grade" onSubmit={enviar}><Aviso tipo="info">Valores previstos não alteram o saldo. O lançamento será criado na confirmação ou automaticamente no vencimento, quando essa opção estiver ativa no cartão.</Aviso>{estado.erro && <Aviso>{estado.erro}</Aviso>}
-    <div className="campo"><span>Forma de pagamento</span><div className="alternador-historico" role="group" aria-label="Forma de pagamento"><button type="button" className={formaPagamento === "debito" ? "ativa" : ""} aria-pressed={formaPagamento === "debito"} onClick={() => alterarFormaPagamento("debito")}>Débito</button><button type="button" className={formaPagamento === "cartao_credito" ? "ativa" : ""} aria-pressed={formaPagamento === "cartao_credito"} onClick={() => alterarFormaPagamento("cartao_credito")}><CreditCard size={15} /> Cartão de crédito</button></div></div>
     <Seletor rotulo={formaPagamento === "cartao_credito" ? "Cartão de crédito" : "Conta em reais"} required value={contaId} onChange={(e) => definirConta(e.target.value)}><option value="">Selecione</option>{contasCompativeis.map((conta) => <option key={conta.id} value={conta.id}>{conta.nome}</option>)}</Seletor>
     {formaPagamento === "cartao_credito" && <label className="opcao-saldo"><input type="checkbox" checked={cobrancaAutomatica} onChange={(e) => definirCobrancaAutomatica(e.target.checked)} /><span><strong>Cobrar automaticamente no vencimento</strong><small>Na data prevista, a compra será lançada no histórico do cartão e o próximo vencimento será calculado.</small></span></label>}
     <Campo rotulo="Descrição" required minLength={2} maxLength={500} value={descricao} onChange={(e) => definirDescricao(e.target.value)} placeholder="Ex.: Aluguel" />

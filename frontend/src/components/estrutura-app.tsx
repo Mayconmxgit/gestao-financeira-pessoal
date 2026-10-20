@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   ArrowRightLeft, BarChart3, ChartNoAxesCombined, ChevronDown, CircleHelp, CreditCard,
-  Crown, HandCoins, LayoutDashboard, LogOut, Menu, Settings2, UploadCloud, X,
+  Crown, HandCoins, Landmark, LayoutDashboard, LogOut, Menu, PanelLeftClose, Settings2, UploadCloud, X,
 } from "lucide-react";
 import { useAutenticacao } from "@/components/autenticacao";
 import { EscolhaPlanoInicial } from "@/components/escolha-plano-inicial";
@@ -17,7 +17,8 @@ import type { Assinatura } from "@/lib/tipos";
 const navegacao = [
   { href: "/visao-geral", rotulo: "Visão geral", Icone: LayoutDashboard, recurso: RECURSOS_PLANO.VISAO_GERAL },
   { href: "/relatorios", rotulo: "Relatórios", Icone: BarChart3, recurso: RECURSOS_PLANO.VISAO_GERAL },
-  { href: "/contas", rotulo: "Minhas contas", Icone: CreditCard, recurso: RECURSOS_PLANO.CONTAS_MOVIMENTACOES },
+  { href: "/contas", rotulo: "Minhas contas", Icone: Landmark, recurso: RECURSOS_PLANO.CONTAS_MOVIMENTACOES },
+  { href: "/cartoes", rotulo: "Cartões", Icone: CreditCard, recurso: RECURSOS_PLANO.CONTAS_MOVIMENTACOES },
   { href: "/movimentacoes", rotulo: "Movimentações", Icone: ArrowRightLeft, recurso: RECURSOS_PLANO.CONTAS_MOVIMENTACOES },
   { href: "/emprestimos", rotulo: "Empréstimos", Icone: HandCoins, recurso: RECURSOS_PLANO.EMPRESTIMOS },
   { href: "/importacoes", rotulo: "Importar extrato", Icone: UploadCloud, recurso: RECURSOS_PLANO.IMPORTACAO_EXTRATOS },
@@ -30,6 +31,7 @@ const recursosPorRota: Record<string, RecursoPlano> = Object.fromEntries(
 export function EstruturaApp({ children }: { children: React.ReactNode }) {
   const { usuario, carregando, erro, recarregar, sair } = useAutenticacao();
   const [menuAberto, definirMenuAberto] = useState(false);
+  const [menuRecolhido, definirMenuRecolhido] = useState(false);
   const [saindo, definirSaindo] = useState(false);
   const caminho = usePathname();
   const roteador = useRouter();
@@ -46,10 +48,11 @@ export function EstruturaApp({ children }: { children: React.ReactNode }) {
   }
 
   return <AcessoComPlano usuarioAdministrador={usuario.papel === "administrador"} sair={sair}>
-    {(recursos) => <ProvedorRecursosPlano recursos={recursos}><div className="estrutura-app">
+    {(recursos) => <ProvedorRecursosPlano recursos={recursos}><div className={`estrutura-app ${menuRecolhido ? "menu-lateral-recolhido" : ""}`}>
     {menuAberto && <button className="fundo-menu-mobile" aria-label="Fechar menu" onClick={() => definirMenuAberto(false)} />}
-    <aside className={`barra-lateral ${menuAberto ? "barra-lateral-aberta" : ""}`}>
+    <aside id="menu-lateral" className={`barra-lateral ${menuAberto ? "barra-lateral-aberta" : ""}`} aria-hidden={menuRecolhido || undefined} inert={menuRecolhido || undefined}>
       <div className="barra-topo"><Link className="marca" href="/visao-geral" onClick={() => definirMenuAberto(false)}><span className="marca-simbolo"><ChartNoAxesCombined size={22} /></span><span>vida<span className="marca-destaque">financeira</span></span></Link>
+        <button className="botao-icone alternar-menu-lateral" onClick={() => definirMenuRecolhido(true)} aria-label="Esconder menu lateral" title="Esconder menu lateral"><PanelLeftClose size={19} /></button>
         <button className="botao-icone fechar-menu" onClick={() => definirMenuAberto(false)} aria-label="Fechar menu"><X size={20} /></button></div>
       <div className="barra-secao"><span className="barra-rotulo">MENU PRINCIPAL</span><nav aria-label="Principal">{navegacao.filter(({ recurso }) => possuiRecurso(recursos, recurso)).map(({ href, rotulo, Icone }) =>
         <Link key={href} href={href} onClick={() => definirMenuAberto(false)} className={`barra-link ${caminho === href ? "ativo" : ""}`}><Icone size={19} strokeWidth={1.9} />{rotulo}</Link>)}</nav></div>
@@ -63,7 +66,7 @@ export function EstruturaApp({ children }: { children: React.ReactNode }) {
       </div>
     </aside>
     <div className="conteudo-app"><header className="barra-superior">
-      <div className="barra-superior-esquerda"><button className="botao-icone abrir-menu" onClick={() => definirMenuAberto(true)} aria-label="Abrir menu"><Menu size={22} /></button><span className="barra-local">Espaço pessoal <ChevronDown size={14} /></span></div>
+      <div className="barra-superior-esquerda"><button className="botao-icone abrir-menu" onClick={() => { definirMenuRecolhido(false); definirMenuAberto(true); }} aria-label="Mostrar menu lateral" title="Mostrar menu lateral" aria-controls="menu-lateral"><Menu size={22} /></button><span className="barra-local">Espaço pessoal <ChevronDown size={14} /></span></div>
       <div className="barra-superior-direita"><span className="barra-data">{new Intl.DateTimeFormat("pt-BR", { day: "numeric", month: "long", year: "numeric" }).format(new Date())}</span><span className="avatar avatar-pequeno">{usuario.nome.slice(0, 1).toUpperCase()}</span></div>
     </header><main className="conteudo-principal">{recursoPermitido(caminho, recursos) ? children : <RecursoBloqueado />}</main></div>
   </div></ProvedorRecursosPlano>}

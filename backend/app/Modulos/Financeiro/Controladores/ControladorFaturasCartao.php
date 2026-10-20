@@ -28,6 +28,7 @@ final class ControladorFaturasCartao extends Controller
     {
         $dados = Entrada::validar($requisicao, [
             'data' => ['required', 'date_format:Y-m-d', 'before_or_equal:today'],
+            'conta_pagamento_id' => ['required', 'integer', 'min:1'],
             'transacao_id' => ['nullable', 'integer', 'min:1'],
             'codigo_movimentacao' => ['nullable', 'string', 'regex:/^#?[1-9][0-9]{8}$/'],
         ]);
@@ -38,7 +39,8 @@ final class ControladorFaturasCartao extends Controller
         }
 
         return response()->json(['fatura' => $this->faturas->pagar(
-            Entrada::usuario($requisicao), $id, $faturaId, $dados['data'], $dados['transacao_id'] ?? null,
+            Entrada::usuario($requisicao), $id, $faturaId, (int) $dados['conta_pagamento_id'],
+            $dados['data'], $dados['transacao_id'] ?? null,
             isset($dados['codigo_movimentacao']) ? Codigo::normalizar($dados['codigo_movimentacao']) : null,
         )]);
     }
@@ -47,11 +49,13 @@ final class ControladorFaturasCartao extends Controller
     {
         $dados = Entrada::validar($requisicao, [
             'data' => ['required', 'date_format:Y-m-d', 'before_or_equal:today'],
+            'conta_pagamento_id' => ['required', 'integer', 'min:1'],
             'valor' => ['required', 'regex:/^[0-9]{1,15}(?:\.[0-9]{1,2})?$/'],
         ]);
 
         return response()->json(['fatura' => $this->faturas->adiantar(
-            Entrada::usuario($requisicao), $id, $faturaId, $dados['data'], $dados['valor'],
+            Entrada::usuario($requisicao), $id, $faturaId, (int) $dados['conta_pagamento_id'],
+            $dados['data'], $dados['valor'],
         )]);
     }
 

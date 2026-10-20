@@ -146,17 +146,15 @@ final class ServicoFaturasCartao
         return $this->apresentar($fatura) + ['transacoes' => $transacoes->all()];
     }
 
-    public function pagar(int $usuario, int $cartaoId, int $faturaId, string $data, ?int $transacaoId, ?string $codigoMovimentacao = null): array
+    public function pagar(int $usuario, int $cartaoId, int $faturaId, int $contaPagamentoId, string $data, ?int $transacaoId, ?string $codigoMovimentacao = null): array
     {
-        return DB::transaction(function () use ($usuario, $cartaoId, $faturaId, $data, $transacaoId, $codigoMovimentacao): array {
+        return DB::transaction(function () use ($usuario, $cartaoId, $faturaId, $contaPagamentoId, $data, $transacaoId, $codigoMovimentacao): array {
             $fatura = DB::table('faturas_cartao')->where('usuario_id', $usuario)->where('cartao_id', $cartaoId)
                 ->where('id', $faturaId)->lockForUpdate()->first();
             abort_if($fatura === null, 404);
             abort_unless(in_array($fatura->situacao, ['fechada', 'vencida'], true) && bccomp((string) $fatura->valor_total, '0', 2) > 0, 409);
             $cartao = $this->cartao($usuario, $cartaoId);
-            $conta = DB::table('contas')->where('usuario_id', $usuario)->where('id', $fatura->conta_pagamento_id)
-                ->lockForUpdate()->first();
-            abort_unless($conta !== null && $conta->situacao === 'ativa' && $conta->tipo !== 'cartao_credito', 409);
+            $conta = $this->vincularContaPagamento($usuario, $cartao, $fatura, $contaPagamentoId);
             if ($codigoMovimentacao !== null) {
                 $transacaoId = Codigo::resolver($usuario, $codigoMovimentacao);
                 if ($transacaoId === null) {
@@ -178,9 +176,9 @@ final class ServicoFaturasCartao
         });
     }
 
-    public function adiantar(int $usuario, int $cartaoId, int $faturaId, string $data, string $valor): array
+    public function adiantar(int $usuario, int $cartaoId, int $faturaId, int $contaPagamentoId, string $data, string $valor): array
     {
-        return DB::transaction(function () use ($usuario, $cartaoId, $faturaId, $data, $valor): array {
+        return DB::transaction(function () use ($usuario, $cartaoId, $faturaId, $contaPagamentoId, $data, $valor): array {
             $cartao = DB::table('contas')->where('usuario_id', $usuario)->where('id', $cartaoId)
                 ->where('tipo', 'cartao_credito')->where('situacao', 'ativa')->lockForUpdate()->first();
             abort_if($cartao === null, 404);
@@ -197,9 +195,7 @@ final class ServicoFaturasCartao
                 throw ValidationException::withMessages(['valor' => 'O adiantamento deve ser menor que o valor atual da fatura.']);
             }
 
-            $conta = DB::table('contas')->where('usuario_id', $usuario)->where('id', $fatura->conta_pagamento_id)
-                ->where('situacao', 'ativa')->where('tipo', '<>', 'cartao_credito')->lockForUpdate()->first();
-            abort_if($conta === null, 409);
+            $conta = $this->vincularContaPagamento($usuario, $cartao, $fatura, $contaPagamentoId);
 
             $saldo = $this->saldoDisponivel($usuario, $conta, $data);
             if (bccomp($saldo, $valor, 2) < 0) {
@@ -348,9 +344,10 @@ final class ServicoFaturasCartao
     public function resumo(int $usuario, string $moeda): array
     {
         $hoje = CarbonImmutable::today(config('app.timezone'));
-        $cartoes = DB::table('contas as cartao')->join('contas as banco', 'banco.id', '=', 'cartao.conta_pagamento_id')
+        $cartoes = DB::table('contas as cartao')->leftJoin('contas as banco', 'banco.id', '=', 'cartao.conta_pagamento_id')
             ->where('cartao.usuario_id', $usuario)->where('cartao.tipo', 'cartao_credito')->where('cartao.moeda', $moeda)
-            ->select('cartao.*', 'banco.nome as conta_pagamento_nome', 'banco.instituicao as banco_instituicao')->orderBy('cartao.id')->get();
+            ->select('cartao.*', 'banco.nome as conta_pagamento_nome',
+                DB::raw('COALESCE(cartao.instituicao, banco.instituicao) as banco_instituicao'))->orderBy('cartao.id')->get();
         $itens = [];
         foreach ($cartoes as $cartao) {
             $aberta = DB::table('faturas_cartao')->where('cartao_id', $cartao->id)->where('situacao', 'aberta')->first();
@@ -557,6 +554,26 @@ final class ServicoFaturasCartao
         $valor = bcsub('0', (string) $fatura->valor_total, 2);
 
         return DB::table('transacoes')->insertGetId($this->dadosPagamento($usuario, $conta, $data, $valor, 'manual'));
+    }
+
+    private function vincularContaPagamento(int $usuario, object $cartao, object $fatura, int $contaId): object
+    {
+        $conta = DB::table('contas')->where('usuario_id', $usuario)->where('id', $contaId)
+            ->where('situacao', 'ativa')->where('tipo', '<>', 'cartao_credito')->lockForUpdate()->first();
+        abort_unless($conta !== null && $conta->moeda === $cartao->moeda, 422);
+
+        DB::table('contas')->where('id', $cartao->id)->update([
+            'conta_pagamento_id' => $conta->id, 'updated_at' => now(),
+        ]);
+        DB::table('faturas_cartao')->where('id', $fatura->id)->update([
+            'conta_pagamento_id' => $conta->id, 'updated_at' => now(),
+        ]);
+        DB::table('faturas_cartao')->where('cartao_id', $cartao->id)->where('situacao', 'aberta')->update([
+            'conta_pagamento_id' => $conta->id, 'updated_at' => now(),
+        ]);
+        $fatura->conta_pagamento_id = $conta->id;
+
+        return $conta;
     }
 
     private function associarDebito(int $usuario, object $conta, object $fatura, int $transacaoId): int
