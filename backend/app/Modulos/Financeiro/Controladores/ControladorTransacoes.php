@@ -28,6 +28,14 @@ final class ControladorTransacoes extends Controller
         $dados = $this->validarFiltros($requisicao);
         $usuario = Entrada::usuario($requisicao);
         $consulta = DB::table('transacoes')->where('usuario_id', $usuario);
+        $consulta->where(function (Builder $visiveis) use ($usuario): void {
+            $visiveis->where('situacao', '<>', 'cancelada')
+                ->orWhereNotExists(function (Builder $cartoes) use ($usuario): void {
+                    $cartoes->selectRaw('1')->from('contas')
+                        ->whereColumn('contas.id', 'transacoes.conta_id')
+                        ->where('contas.usuario_id', $usuario)->where('contas.tipo', 'cartao_credito');
+                });
+        });
         $this->aplicarFiltros($consulta, $dados, $usuario);
         $limite = (int) ($dados['limite'] ?? 50);
         $ordem = $dados['ordem'] ?? 'asc';

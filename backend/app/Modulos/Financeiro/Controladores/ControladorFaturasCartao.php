@@ -28,9 +28,10 @@ final class ControladorFaturasCartao extends Controller
     {
         $dados = Entrada::validar($requisicao, [
             'data' => ['required', 'date_format:Y-m-d', 'before_or_equal:today'],
-            'conta_pagamento_id' => ['required', 'integer', 'min:1'],
-            'transacao_id' => ['nullable', 'integer', 'min:1'],
-            'codigo_movimentacao' => ['nullable', 'string', 'regex:/^#?[1-9][0-9]{8}$/'],
+            'pagamento_externo' => ['sometimes', 'boolean'],
+            'conta_pagamento_id' => ['required_unless:pagamento_externo,true', 'prohibited_if:pagamento_externo,true', 'nullable', 'integer', 'min:1'],
+            'transacao_id' => ['prohibited_if:pagamento_externo,true', 'nullable', 'integer', 'min:1'],
+            'codigo_movimentacao' => ['prohibited_if:pagamento_externo,true', 'nullable', 'string', 'regex:/^#?[1-9][0-9]{8}$/'],
         ]);
         if (isset($dados['transacao_id'], $dados['codigo_movimentacao'])) {
             throw ValidationException::withMessages([
@@ -39,9 +40,10 @@ final class ControladorFaturasCartao extends Controller
         }
 
         return response()->json(['fatura' => $this->faturas->pagar(
-            Entrada::usuario($requisicao), $id, $faturaId, (int) $dados['conta_pagamento_id'],
+            Entrada::usuario($requisicao), $id, $faturaId, isset($dados['conta_pagamento_id']) ? (int) $dados['conta_pagamento_id'] : null,
             $dados['data'], $dados['transacao_id'] ?? null,
             isset($dados['codigo_movimentacao']) ? Codigo::normalizar($dados['codigo_movimentacao']) : null,
+            (bool) ($dados['pagamento_externo'] ?? false),
         )]);
     }
 

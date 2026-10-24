@@ -33,12 +33,12 @@ export default function Cartoes() {
       acao={aba === "cartoes" ? <Botao onClick={() => definirModal("criar")}><Plus size={18} /> Novo cartão</Botao> : undefined} />
     <div className="abas"><button className={aba === "cartoes" ? "ativa" : ""} onClick={() => definirAba("cartoes")}>Cartões e faturas</button><button className={aba === "historico" ? "ativa" : ""} onClick={() => definirAba("historico")}>Compras e histórico</button>{permiteRecorrentes && <button className={aba === "recorrentes" ? "ativa" : ""} onClick={() => definirAba("recorrentes")}>Pagamentos recorrentes</button>}</div>
     {contas.erro && <Aviso>{contas.erro}</Aviso>}{categorias.erro && <Aviso>{categorias.erro}</Aviso>}
-    {aba === "historico" ? <HistoricoMovimentacoes formaPagamento="cartao_credito" contas={todasContas} categorias={categorias.dados?.dados ?? []} />
+    {aba === "historico" ? <HistoricoMovimentacoes formaPagamento="cartao_credito" contas={todasContas} categorias={categorias.dados?.dados ?? []} atualizado={contas.recarregar} />
       : aba === "recorrentes" && permiteRecorrentes ? <PagamentosRecorrentes formaPagamento="cartao_credito" contas={todasContas} categorias={categorias.dados?.dados ?? []} />
       : <ListaCartoes cartoes={cartoes} carregando={contas.carregando} editar={(cartao) => abrir("editar", cartao)} faturas={(cartao) => abrir("faturas", cartao)} criar={() => definirModal("criar")} />}
     {modal === "criar" && <Modal titulo="Novo cartão" fechar={() => definirModal(null)}><FormularioCartao contas={todasContas} concluir={concluir} /></Modal>}
     {modal === "editar" && selecionado && <Modal titulo={`Editar ${selecionado.nome}`} fechar={() => definirModal(null)}><FormularioCartao cartao={selecionado} contas={todasContas} concluir={concluir} /></Modal>}
-    {modal === "faturas" && selecionado && <Modal titulo={`Faturas de ${selecionado.nome}`} fechar={() => definirModal(null)} largo><PainelFaturas cartao={selecionado} contas={todasContas} atualizado={() => contas.recarregar()} /></Modal>}
+    {modal === "faturas" && selecionado && <Modal titulo={`Faturas de ${selecionado.nome}`} fechar={() => definirModal(null)} largo><PainelFaturas cartao={cartoes.find((cartao) => cartao.id === selecionado.id) ?? selecionado} contas={todasContas} atualizado={() => contas.recarregar()} /></Modal>}
   </div>;
 }
 
@@ -98,10 +98,10 @@ function PainelFaturas({ cartao, contas, atualizado }: { cartao: Conta; contas: 
 
   return <div className="painel-faturas">{faturas.erro && <Aviso>{faturas.erro}</Aviso>}
     <div className="fatura-limite"><span>Limite total <strong>{formatarMoeda(cartao.limite_credito ?? "0", cartao.moeda)}</strong></span><span>Utilizado <strong>{formatarMoeda(cartao.limite_utilizado ?? "0", cartao.moeda)}</strong></span><span>Disponível <strong>{formatarMoeda(cartao.limite_disponivel ?? "0", cartao.moeda)}</strong></span></div>
-    <div className="lista-faturas">{faturas.dados?.faturas.map((fatura) => <div className="fatura-linha" key={fatura.id}><div><strong>{formatarData(fatura.inicio_periodo)} a {formatarData(fatura.fim_periodo)}</strong><small>Fecha em {formatarData(fatura.fechamento)} · vence em {formatarData(fatura.vencimento)}</small></div><strong>{formatarMoeda(fatura.valor_total, cartao.moeda)}</strong><span className={`situacao situacao-${fatura.situacao}`}>{fatura.situacao}</span><div className="acoes-fatura">{fatura.fechavel && <Botao type="button" variante="secundario" onClick={() => definirFechamento(fatura)}>Fechar agora</Botao>}{fatura.correcao_permitida && <Botao type="button" variante="secundario" onClick={() => definirCorrecao(fatura)}>Corrigir fatura</Botao>}{fatura.situacao === "aberta" && Number(fatura.valor_total) > 0.01 && <Botao type="button" variante="secundario" onClick={() => definirAdiantamento(fatura)}>Adiantar valor</Botao>}{(["fechada", "vencida"] as string[]).includes(fatura.situacao) && Number(fatura.valor_total) > 0 && <Botao type="button" variante="secundario" onClick={() => definirPagamento(fatura)}>Pagar fatura</Botao>}</div></div>)}</div>
+    <div className="lista-faturas">{faturas.dados?.faturas.map((fatura) => <div className="fatura-linha" key={fatura.id}><div><strong>{formatarData(fatura.inicio_periodo)} a {formatarData(fatura.fim_periodo)}</strong><small>Fecha em {formatarData(fatura.fechamento)} · vence em {formatarData(fatura.vencimento)}</small></div><strong>{formatarMoeda(fatura.valor_total, cartao.moeda)}</strong><span className={`situacao situacao-${fatura.situacao}`}>{fatura.pagamento_externo ? "paga · pagamento externo" : fatura.situacao}</span><div className="acoes-fatura">{fatura.fechavel && <Botao type="button" variante="secundario" onClick={() => definirFechamento(fatura)}>Fechar agora</Botao>}{fatura.correcao_permitida && <Botao type="button" variante="secundario" onClick={() => definirCorrecao(fatura)}>Corrigir fatura</Botao>}{fatura.situacao === "aberta" && Number(fatura.valor_total) > 0.01 && <Botao type="button" variante="secundario" onClick={() => definirAdiantamento(fatura)}>Adiantar valor</Botao>}{(["fechada", "vencida"] as string[]).includes(fatura.situacao) && Number(fatura.valor_total) > 0 && <Botao type="button" variante="secundario" onClick={() => definirPagamento(fatura)}>Pagar fatura</Botao>}</div></div>)}</div>
     {!faturas.carregando && !faturas.dados?.faturas.length && <Vazio titulo="Nenhuma fatura" descricao="A primeira fatura será criada automaticamente." />}
     {fechamento && <FormularioFechamento cartao={cartao} fatura={fechamento} cancelar={() => definirFechamento(null)} concluir={() => { definirFechamento(null); faturas.recarregar(); }} />}
-    {correcao && <PainelCorrecao cartao={cartao} fatura={correcao} cancelar={() => definirCorrecao(null)} atualizado={() => faturas.recarregar()} />}
+    {correcao && <PainelCorrecao cartao={cartao} fatura={correcao} cancelar={() => definirCorrecao(null)} atualizado={() => { faturas.recarregar(); atualizado(); }} />}
     {adiantamento && <FormularioMovimentoFatura tipo="adiantamento" cartao={cartao} fatura={adiantamento} contas={contas} cancelar={() => definirAdiantamento(null)} concluir={concluirOperacao} saldoInsuficiente={definirSaldoInsuficiente} />}
     {pagamento && <FormularioMovimentoFatura tipo="pagamento" cartao={cartao} fatura={pagamento} contas={contas} cancelar={() => definirPagamento(null)} concluir={concluirOperacao} saldoInsuficiente={definirSaldoInsuficiente} />}
     {saldoInsuficiente && <Modal titulo="Saldo insuficiente" fechar={() => definirSaldoInsuficiente(null)}><div className="saldo-insuficiente"><Aviso>Nenhuma movimentação foi criada. A fatura permanece pendente.</Aviso><dl><div><dt>Conta</dt><dd>{String(saldoInsuficiente.conta ?? "—")}</dd></div><div><dt>Saldo disponível</dt><dd>{formatarMoeda(String(saldoInsuficiente.saldo_disponivel ?? 0), cartao.moeda)}</dd></div><div><dt>Valor solicitado</dt><dd>{formatarMoeda(String(saldoInsuficiente.valor_fatura ?? 0), cartao.moeda)}</dd></div></dl></div></Modal>}
@@ -116,13 +116,16 @@ function FormularioMovimentoFatura({ tipo, cartao, fatura, contas, cancelar, con
   const [contaId, definirContaId] = useState(cartao.conta_pagamento_id ?? compativeis[0]?.id ?? "");
   const [data, definirData] = useState(dataHojeLocal()); const [valor, definirValor] = useState("");
   const [usarExistente, definirUsarExistente] = useState(false); const [transacao, definirTransacao] = useState("");
+  const [pagamentoExterno, definirPagamentoExterno] = useState(false);
   const [estado, definirEstado] = useState({ erro: "", enviando: false });
   const maximo = (Number(fatura.valor_total) - 0.01).toFixed(2);
 
   async function enviar(evento: FormEvent) {
     evento.preventDefault(); definirEstado({ erro: "", enviando: true });
     const caminho = tipo === "pagamento" ? "pagamento" : "adiantamentos";
-    const corpo = tipo === "pagamento" ? { data, conta_pagamento_id: contaId, codigo_movimentacao: usarExistente ? transacao : null } : { data, valor, conta_pagamento_id: contaId };
+    const corpo = tipo === "pagamento"
+      ? pagamentoExterno ? { data, pagamento_externo: true } : { data, conta_pagamento_id: contaId, codigo_movimentacao: usarExistente ? transacao : null }
+      : { data, valor, conta_pagamento_id: contaId };
     try { await api(`financeiro/contas/${cartao.id}/faturas/${fatura.id}/${caminho}`, { method: "POST", body: JSON.stringify(corpo) }); concluir(); }
     catch (falha) {
       if (falha instanceof ErroApi && falha.codigo === "saldo_insuficiente" && falha.detalhes) saldoInsuficiente(falha.detalhes);
@@ -130,13 +133,15 @@ function FormularioMovimentoFatura({ tipo, cartao, fatura, contas, cancelar, con
     }
   }
 
-  return <form className="pagamento-fatura" onSubmit={enviar}><h3>{tipo === "pagamento" ? `Pagar ${formatarMoeda(fatura.valor_total, cartao.moeda)}` : "Adiantar parte da fatura"}</h3><p>A conta escolhida será vinculada ao cartão e usada nos próximos ciclos.</p>{estado.erro && <Aviso>{estado.erro}</Aviso>}
-    {!compativeis.length && <Aviso>Cadastre uma conta ativa em {cartao.moeda} antes de continuar.</Aviso>}
-    <Seletor rotulo="Conta pagadora" required value={contaId} onChange={(e) => definirContaId(e.target.value)}><option value="">Selecione</option>{compativeis.map((conta) => <option key={conta.id} value={conta.id}>{conta.nome} · {conta.instituicao || "Sem instituição"}</option>)}</Seletor>
+  return <form className="pagamento-fatura" onSubmit={enviar}><h3>{tipo === "pagamento" ? `Pagar ${formatarMoeda(fatura.valor_total, cartao.moeda)}` : "Adiantar parte da fatura"}</h3>{estado.erro && <Aviso>{estado.erro}</Aviso>}
+    {tipo === "pagamento" && <Seletor rotulo="Forma de pagamento" value={pagamentoExterno ? "externo" : "conta"} onChange={(e) => { definirPagamentoExterno(e.target.value === "externo"); definirUsarExistente(false); definirTransacao(""); }}><option value="conta">Usar saldo de uma conta</option><option value="externo">Pagamento externo — sem debitar conta</option></Seletor>}
+    {pagamentoExterno ? <Aviso tipo="info">A fatura será marcada como paga e o limite do cartão será liberado. Nenhuma conta será debitada. O pagamento ficará registrado para auditoria.</Aviso> : <><p>A conta escolhida será vinculada ao cartão e usada nos próximos ciclos.</p>
+      {!compativeis.length && <Aviso>Cadastre uma conta ativa em {cartao.moeda} antes de continuar.</Aviso>}
+      <Seletor rotulo="Conta pagadora" required value={contaId} onChange={(e) => definirContaId(e.target.value)}><option value="">Selecione</option>{compativeis.map((conta) => <option key={conta.id} value={conta.id}>{conta.nome} · {conta.instituicao || "Sem instituição"}</option>)}</Seletor></>}
     {tipo === "adiantamento" && <Campo rotulo="Valor do adiantamento" type="number" min="0.01" max={maximo} step="0.01" required value={valor} onChange={(e) => definirValor(e.target.value)} />}
     <Campo rotulo="Data" type="date" max={dataHojeLocal()} required value={data} onChange={(e) => definirData(e.target.value)} />
-    {tipo === "pagamento" && <><label className="opcao-checkbox"><input type="checkbox" checked={usarExistente} onChange={(e) => definirUsarExistente(e.target.checked)} /> Vincular um débito existente</label>{usarExistente && <Campo rotulo="Código da movimentação" pattern="#?[1-9][0-9]{8}" maxLength={10} required value={transacao} onChange={(e) => definirTransacao(e.target.value)} />}</>}
-    <div className="modal-acoes"><Botao type="button" variante="texto" onClick={cancelar}>Cancelar</Botao><Botao type="submit" carregando={estado.enviando} disabled={!compativeis.length}>Confirmar</Botao></div>
+    {tipo === "pagamento" && !pagamentoExterno && <><label className="opcao-checkbox"><input type="checkbox" checked={usarExistente} onChange={(e) => definirUsarExistente(e.target.checked)} /> Vincular um débito existente</label>{usarExistente && <Campo rotulo="Código da movimentação" pattern="#?[1-9][0-9]{8}" maxLength={10} required value={transacao} onChange={(e) => definirTransacao(e.target.value)} />}</>}
+    <div className="modal-acoes"><Botao type="button" variante="texto" onClick={cancelar}>Cancelar</Botao><Botao type="submit" carregando={estado.enviando} disabled={!pagamentoExterno && !compativeis.length}>{pagamentoExterno ? "Confirmar pagamento externo" : "Confirmar"}</Botao></div>
   </form>;
 }
 

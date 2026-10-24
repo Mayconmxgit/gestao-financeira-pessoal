@@ -48,6 +48,9 @@ final class ServicoFaturasCartao
         abort_unless($cartao->tipo === 'cartao_credito' && $cartao->situacao === 'ativa', 409);
         $this->fecharDoCartao($usuario, $cartao, CarbonImmutable::today(config('app.timezone')));
         $fatura = $this->garantirAberta($usuario, $cartao, CarbonImmutable::parse($data));
+        if ($fatura->situacao === 'paga') {
+            throw ValidationException::withMessages(['data' => 'A data da compra pertence a uma fatura já paga. Informe uma data de uma fatura pendente.']);
+        }
         $utilizado = $this->limiteUtilizado($usuario, $cartaoId);
         $compra = bcsub('0', Entrada::moeda($valor), 2);
         if (bccomp(bcadd($utilizado, $compra, 2), (string) $cartao->limite_credito, 2) > 0) {
@@ -64,6 +67,9 @@ final class ServicoFaturasCartao
         $cartao = DB::table('contas')->where('usuario_id', $usuario)->where('id', $cartaoId)->lockForUpdate()->first();
         abort_unless($cartao !== null && $cartao->tipo === 'cartao_credito', 422);
         $fatura = $this->garantirAberta($usuario, $cartao, CarbonImmutable::parse($data));
+        if ($fatura->situacao === 'paga') {
+            throw ValidationException::withMessages(['data' => 'A data da compra pertence a uma fatura já paga. Informe uma data de uma fatura pendente.']);
+        }
         $utilizadoSemAtual = bcsub($this->limiteUtilizado($usuario, $cartaoId), bcsub('0', (string) $transacao->valor, 2), 2);
         if (bccomp(bcadd($utilizadoSemAtual, bcsub('0', $valor, 2), 2), (string) $cartao->limite_credito, 2) > 0) {
             throw ValidationException::withMessages(['valor' => 'Limite insuficiente no cartão.']);
@@ -88,10 +94,14 @@ final class ServicoFaturasCartao
     public function sincronizar(int $faturaId): void
     {
         $fatura = DB::table('faturas_cartao')->where('id', $faturaId)->first();
-        if ($fatura === null || $fatura->situacao !== 'aberta') {
+        if ($fatura === null || $fatura->situacao === 'paga') {
             return;
         }
-        $this->recalcular($fatura);
+        if ($fatura->situacao === 'aberta') {
+            $this->recalcular($fatura);
+        } else {
+            $this->recalcularCorrecao($fatura);
+        }
     }
 
     public function fecharTodas(string $data): int
@@ -128,6 +138,7 @@ final class ServicoFaturasCartao
 
         $transacoes = DB::table('transacoes')
             ->where('usuario_id', $usuario)->where('fatura_cartao_id', $faturaId)
+            ->where('situacao', '<>', 'cancelada')
             ->orderBy('data_efetiva')->orderBy('id')->get();
         $ids = $transacoes->pluck('id');
         $referenciadas = DB::table('transacoes')->whereIn('transacao_relacionada_id', $ids)
@@ -146,31 +157,43 @@ final class ServicoFaturasCartao
         return $this->apresentar($fatura) + ['transacoes' => $transacoes->all()];
     }
 
-    public function pagar(int $usuario, int $cartaoId, int $faturaId, int $contaPagamentoId, string $data, ?int $transacaoId, ?string $codigoMovimentacao = null): array
+    public function pagar(int $usuario, int $cartaoId, int $faturaId, ?int $contaPagamentoId, string $data, ?int $transacaoId, ?string $codigoMovimentacao = null, bool $pagamentoExterno = false): array
     {
-        return DB::transaction(function () use ($usuario, $cartaoId, $faturaId, $contaPagamentoId, $data, $transacaoId, $codigoMovimentacao): array {
+        abort_unless($pagamentoExterno
+            ? $contaPagamentoId === null && $transacaoId === null && $codigoMovimentacao === null
+            : $contaPagamentoId !== null, 422);
+
+        return DB::transaction(function () use ($usuario, $cartaoId, $faturaId, $contaPagamentoId, $data, $transacaoId, $codigoMovimentacao, $pagamentoExterno): array {
             $fatura = DB::table('faturas_cartao')->where('usuario_id', $usuario)->where('cartao_id', $cartaoId)
                 ->where('id', $faturaId)->lockForUpdate()->first();
             abort_if($fatura === null, 404);
             abort_unless(in_array($fatura->situacao, ['fechada', 'vencida'], true) && bccomp((string) $fatura->valor_total, '0', 2) > 0, 409);
             $cartao = $this->cartao($usuario, $cartaoId);
-            $conta = $this->vincularContaPagamento($usuario, $cartao, $fatura, $contaPagamentoId);
-            if ($codigoMovimentacao !== null) {
-                $transacaoId = Codigo::resolver($usuario, $codigoMovimentacao);
-                if ($transacaoId === null) {
-                    throw ValidationException::withMessages(['codigo_movimentacao' => 'Código de movimentação inválido.']);
+            $debito = null;
+            if (! $pagamentoExterno) {
+                $conta = $this->vincularContaPagamento($usuario, $cartao, $fatura, $contaPagamentoId);
+                if ($codigoMovimentacao !== null) {
+                    $transacaoId = Codigo::resolver($usuario, $codigoMovimentacao);
+                    if ($transacaoId === null) {
+                        throw ValidationException::withMessages(['codigo_movimentacao' => 'Código de movimentação inválido.']);
+                    }
                 }
+                $debito = $transacaoId === null
+                    ? $this->criarDebito($usuario, $conta, $fatura, $data)
+                    : $this->associarDebito($usuario, $conta, $fatura, $transacaoId);
             }
-            $debito = $transacaoId === null
-                ? $this->criarDebito($usuario, $conta, $fatura, $data)
-                : $this->associarDebito($usuario, $conta, $fatura, $transacaoId);
             $credito = $this->criarCreditoCartao($usuario, $cartao, $fatura, $data, $debito);
-            DB::table('transacoes')->where('id', $debito)->update(['transacao_relacionada_id' => $credito, 'updated_at' => now()]);
+            if ($debito !== null) {
+                DB::table('transacoes')->where('id', $debito)->update(['transacao_relacionada_id' => $credito, 'updated_at' => now()]);
+            }
             DB::table('faturas_cartao')->where('id', $faturaId)->update([
                 'situacao' => 'paga', 'transacao_pagamento_id' => $debito, 'transacao_cartao_id' => $credito,
                 'paga_em' => now(), 'updated_at' => now(),
             ]);
-            Entrada::auditar($usuario, 'fatura_cartao_paga', 'faturas_cartao', $faturaId, ['transacao_pagamento_id' => $debito]);
+            Entrada::auditar($usuario, $pagamentoExterno ? 'fatura_cartao_paga_externamente' : 'fatura_cartao_paga', 'faturas_cartao', $faturaId, [
+                'transacao_pagamento_id' => $debito, 'transacao_cartao_id' => $credito,
+                'pagamento_externo' => $pagamentoExterno, 'data' => $data, 'valor' => (string) $fatura->valor_total,
+            ]);
 
             return $this->apresentar(DB::table('faturas_cartao')->find($faturaId));
         });
@@ -588,9 +611,11 @@ final class ServicoFaturasCartao
         return $transacaoId;
     }
 
-    private function criarCreditoCartao(int $usuario, object $cartao, object $fatura, string $data, int $debito): int
+    private function criarCreditoCartao(int $usuario, object $cartao, object $fatura, string $data, ?int $debito): int
     {
-        return DB::table('transacoes')->insertGetId($this->dadosPagamento($usuario, $cartao, $data, (string) $fatura->valor_total, 'conciliacao') + ['transacao_relacionada_id' => $debito]);
+        $descricao = $debito === null ? 'Pagamento externo de fatura' : 'Pagamento de fatura';
+
+        return DB::table('transacoes')->insertGetId($this->dadosPagamento($usuario, $cartao, $data, (string) $fatura->valor_total, 'conciliacao', $descricao) + ['transacao_relacionada_id' => $debito]);
     }
 
     private function dadosPagamento(
@@ -636,6 +661,7 @@ final class ServicoFaturasCartao
             'fechamento' => $fatura->fechamento, 'vencimento' => $fatura->vencimento,
             'valor_total' => Entrada::moeda((string) $fatura->valor_total), 'situacao' => $fatura->situacao,
             'transacao_pagamento_id' => $fatura->transacao_pagamento_id, 'paga_em' => $fatura->paga_em,
+            'pagamento_externo' => $fatura->situacao === 'paga' && $fatura->transacao_cartao_id !== null && $fatura->transacao_pagamento_id === null,
             'correcao_permitida' => $this->correcaoPermitida($fatura),
             'fechavel' => $this->fechamentoAntecipadoPermitido($fatura, $hoje),
         ];

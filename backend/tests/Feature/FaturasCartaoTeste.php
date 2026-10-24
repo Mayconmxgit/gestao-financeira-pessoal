@@ -191,11 +191,67 @@ final class FaturasCartaoTeste extends TestCase
             'motivo' => 'Compra lançada em duplicidade',
         ])->assertOk()->assertJsonPath('situacao', 'cancelada');
 
+        $this->assertDatabaseHas('transacoes', ['uuid' => $compra, 'valor' => '-120.00', 'situacao' => 'cancelada']);
+        foreach (['', '?forma_pagamento=cartao_credito', "?conta_id=$cartao"] as $filtro) {
+            $this->withToken($token)->getJson('/api/v1/transacoes'.$filtro)
+                ->assertOk()->assertJsonMissing(['id' => $compra]);
+        }
+        $fatura = DB::table('faturas_cartao')->where('cartao_id', $this->id('contas', $cartao))->value('uuid');
+        $this->withToken($token)->getJson("/api/v1/contas/$cartao/faturas/$fatura")
+            ->assertOk()->assertJsonCount(0, 'fatura.transacoes');
+        $this->withToken($token)->deleteJson("/api/v1/transacoes/$compra", [
+            'motivo' => 'Repetição da exclusão',
+        ])->assertStatus(409);
+
         $this->assertDatabaseHas('faturas_cartao', [
             'cartao_id' => $this->id('contas', $cartao), 'valor_total' => '0.00',
         ]);
         $this->withToken($token)->getJson('/api/v1/contas')->assertOk()
             ->assertJsonFragment(['id' => $cartao, 'limite_utilizado' => '0.00', 'limite_disponivel' => '500.00']);
+    }
+
+    public function test_compra_retroativa_recalcula_fatura_fechada_e_vencida(): void
+    {
+        $token = $this->autenticar('compra-retroativa@exemplo.test');
+        $conta = $this->conta($token, 'Conta');
+        $cartao = $this->cartao($token, $conta, 'Cartão', '500.00');
+        $this->compra($token, $cartao, '2026-10-06', '38.00');
+        $fatura = (string) DB::table('faturas_cartao')->where('valor_total', '38.00')->value('uuid');
+        CarbonImmutable::setTestNow('2026-10-18 09:00:00');
+
+        $this->withToken($token)->postJson('/api/v1/transacoes', [
+            ...$this->dadosCompra($cartao, '2026-10-07', '225.00'), 'quantidade_parcelas' => 2,
+        ])->assertCreated();
+        $this->assertDatabaseHas('faturas_cartao', ['uuid' => $fatura, 'valor_total' => '150.50', 'situacao' => 'fechada']);
+        app(ServicoFaturasCartao::class)->fecharTodas('2026-10-18');
+        $this->compra($token, $cartao, '2026-10-07', '25.00');
+        $this->assertDatabaseHas('faturas_cartao', ['uuid' => $fatura, 'valor_total' => '175.50', 'situacao' => 'vencida']);
+        $this->withToken($token)->getJson('/api/v1/contas')->assertOk()
+            ->assertJsonFragment(['id' => $cartao, 'limite_utilizado' => '288.00', 'limite_disponivel' => '212.00']);
+    }
+
+    public function test_compra_retroativa_em_fatura_paga_e_recusada_sem_gravacao_parcial(): void
+    {
+        $token = $this->autenticar('retroativa-paga@exemplo.test');
+        $conta = $this->conta($token, 'Conta', '500.00');
+        $cartao = $this->cartao($token, $conta, 'Cartão', '500.00');
+        $this->compra($token, $cartao, '2026-10-07', '38.00');
+        CarbonImmutable::setTestNow('2026-10-18 09:00:00');
+        app(ServicoFaturasCartao::class)->fecharTodas('2026-10-18');
+        $fatura = (string) DB::table('faturas_cartao')->where('valor_total', '38.00')->value('uuid');
+        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/pagamento", [
+            'data' => '2026-10-18', 'conta_pagamento_id' => $conta,
+        ])->assertOk();
+        $quantidade = DB::table('transacoes')->count();
+        $this->withToken($token)->postJson('/api/v1/transacoes', [
+            ...$this->dadosCompra($cartao, '2026-10-07', '225.00'), 'quantidade_parcelas' => 2,
+        ])->assertUnprocessable();
+        $this->assertDatabaseCount('transacoes', $quantidade);
+        $this->assertDatabaseHas('faturas_cartao', ['uuid' => $fatura, 'valor_total' => '38.00', 'situacao' => 'paga']);
+        $compra = $this->compra($token, $cartao, '2026-10-18', '10.00');
+        $this->withToken($token)->patchJson("/api/v1/transacoes/$compra", $this->dadosCompra($cartao, '2026-10-07', '10.00'))
+            ->assertUnprocessable();
+        $this->assertDatabaseHas('transacoes', ['uuid' => $compra, 'data_efetiva' => '2026-10-18']);
     }
 
     public function test_compra_manual_parcelada_distribui_total_em_faturas_mensais(): void
@@ -450,6 +506,10 @@ final class FaturasCartaoTeste extends TestCase
 
         $this->assertDatabaseHas('transacoes', ['uuid' => $compraEditada, 'valor' => '-50.00', 'situacao' => 'confirmada']);
         $this->assertDatabaseHas('transacoes', ['uuid' => $compraExcluida, 'valor' => '-40.00', 'situacao' => 'cancelada']);
+        $this->withToken($token)->getJson("/api/v1/contas/$cartao/faturas/$fatura")
+            ->assertOk()->assertJsonCount(1, 'fatura.transacoes')->assertJsonMissing(['id' => $compraExcluida]);
+        $this->withToken($token)->getJson('/api/v1/transacoes?forma_pagamento=cartao_credito')
+            ->assertOk()->assertJsonMissing(['id' => $compraExcluida]);
         $this->assertDatabaseHas('auditoria_financeira', ['acao' => 'fatura_cartao_lancamento_corrigido']);
         $this->assertDatabaseHas('auditoria_financeira', ['acao' => 'fatura_cartao_lancamento_cancelado']);
         $this->withToken($token)->getJson('/api/v1/contas')->assertOk()
@@ -476,6 +536,82 @@ final class FaturasCartaoTeste extends TestCase
 
         $this->assertDatabaseHas('transacoes', ['uuid' => $compra, 'valor' => '-100.00', 'situacao' => 'confirmada']);
         $this->assertDatabaseHas('faturas_cartao', ['uuid' => $fatura, 'valor_total' => '100.00']);
+    }
+
+    public function test_pagamento_externo_quita_fatura_libera_limite_e_preserva_conta(): void
+    {
+        $token = $this->autenticar('pagamento-externo@exemplo.test');
+        $conta = $this->conta($token, 'Conta sem saldo', '0.00');
+        $cartao = $this->cartao($token, $conta, 'Cartão', '500.00');
+        $this->compra($token, $cartao, '2026-10-07', '120.00');
+        CarbonImmutable::setTestNow('2026-10-10 09:00:00');
+        app(ServicoFaturasCartao::class)->fecharTodas('2026-10-10');
+        $fatura = (string) DB::table('faturas_cartao')->where('valor_total', '120.00')->value('uuid');
+        $quantidade = DB::table('transacoes')->count();
+        $dados = ['data' => '2026-10-10', 'pagamento_externo' => true];
+
+        $outroToken = $this->autenticar('pagamento-externo-alheio@exemplo.test');
+        $this->withToken($outroToken)->postJson("/api/v1/contas/$cartao/faturas/$fatura/pagamento", $dados)->assertNotFound();
+        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/pagamento", $dados)
+            ->assertOk()->assertJsonPath('fatura.situacao', 'paga')
+            ->assertJsonPath('fatura.pagamento_externo', true)->assertJsonPath('fatura.transacao_pagamento_id', null);
+        $this->assertDatabaseCount('transacoes', $quantidade + 1);
+        $this->assertSame(0, DB::table('transacoes')->where('conta_id', $this->id('contas', $conta))->count());
+        $this->assertDatabaseHas('transacoes', [
+            'conta_id' => $this->id('contas', $cartao), 'valor' => '120.00',
+            'natureza' => 'pagamento_fatura', 'descricao_original' => 'Pagamento externo de fatura',
+            'transacao_relacionada_id' => null,
+        ]);
+        $this->assertDatabaseHas('auditoria_financeira', ['acao' => 'fatura_cartao_paga_externamente']);
+        $this->withToken($token)->getJson('/api/v1/contas')->assertOk()
+            ->assertJsonFragment(['id' => $cartao, 'limite_utilizado' => '0.00', 'limite_disponivel' => '500.00']);
+        $this->assertDatabaseHas('contas', ['uuid' => $conta, 'saldo_inicial' => '0.00']);
+        $this->assertDatabaseHas('contas', ['uuid' => $cartao, 'conta_pagamento_id' => $this->id('contas', $conta)]);
+        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/pagamento", $dados)->assertStatus(409);
+        $this->assertDatabaseCount('transacoes', $quantidade + 1);
+    }
+
+    public function test_pagamento_externo_sem_conta_pagadora_e_com_fatura_vencida(): void
+    {
+        $token = $this->autenticar('externo-sem-conta@exemplo.test');
+        $cartao = $this->withToken($token)->postJson('/api/v1/contas', [
+            'nome' => 'Cartão independente', 'tipo' => 'cartao_credito', 'moeda' => 'BRL',
+            'limite_credito' => '500.00', 'dia_fechamento' => 10, 'dia_vencimento' => 17,
+        ])->assertCreated()->json('id');
+        $this->compra($token, $cartao, '2026-10-07', '80.00');
+        $fatura = (string) DB::table('faturas_cartao')->where('valor_total', '80.00')->value('uuid');
+        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/pagamento", [
+            'data' => '2026-10-07', 'pagamento_externo' => true,
+        ])->assertStatus(409);
+        CarbonImmutable::setTestNow('2026-10-18 09:00:00');
+        app(ServicoFaturasCartao::class)->fecharTodas('2026-10-18');
+        $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/pagamento", [
+            'data' => '2026-10-18', 'pagamento_externo' => true,
+        ])->assertOk()->assertJsonPath('fatura.situacao', 'paga')->assertJsonPath('fatura.conta_pagamento_id', null);
+        $this->withToken($token)->getJson('/api/v1/contas')->assertOk()
+            ->assertJsonFragment(['id' => $cartao, 'limite_disponivel' => '500.00']);
+    }
+
+    public function test_pagamento_externo_recusa_conta_debito_e_data_futura(): void
+    {
+        $token = $this->autenticar('externo-validacao@exemplo.test');
+        $conta = $this->conta($token, 'Conta');
+        $cartao = $this->cartao($token, $conta, 'Cartão', '500.00');
+        $this->compra($token, $cartao, '2026-10-07', '80.00');
+        CarbonImmutable::setTestNow('2026-10-10 09:00:00');
+        app(ServicoFaturasCartao::class)->fecharTodas('2026-10-10');
+        $fatura = (string) DB::table('faturas_cartao')->where('valor_total', '80.00')->value('uuid');
+        $quantidade = DB::table('transacoes')->count();
+        foreach ([
+            ['conta_pagamento_id' => $conta], ['codigo_movimentacao' => '123456789'],
+            ['transacao_id' => 1], ['data' => '2026-10-11'], ['pagamento_externo' => 'invalido'],
+        ] as $invalido) {
+            $this->withToken($token)->postJson("/api/v1/contas/$cartao/faturas/$fatura/pagamento", [
+                'data' => '2026-10-10', 'pagamento_externo' => true, ...$invalido,
+            ])->assertUnprocessable();
+        }
+        $this->assertDatabaseCount('transacoes', $quantidade);
+        $this->assertDatabaseHas('faturas_cartao', ['uuid' => $fatura, 'situacao' => 'fechada']);
     }
 
     public function test_pagamento_pode_vincular_debito_existente_sem_criar_nova_saida(): void

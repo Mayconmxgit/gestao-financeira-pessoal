@@ -54,7 +54,7 @@ export type FaturaCartao = {
   fim_periodo: string; fechamento: string; vencimento: string; valor_total: string;
   credito_anterior: string; credito_proximo: string;
   situacao: "aberta" | "fechada" | "vencida" | "paga";
-  transacao_pagamento_id: string | null; paga_em: string | null;
+  transacao_pagamento_id: string | null; paga_em: string | null; pagamento_externo: boolean;
   correcao_permitida: boolean; fechavel: boolean; transacoes?: Transacao[];
 };
 

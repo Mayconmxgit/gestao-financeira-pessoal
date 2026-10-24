@@ -16,8 +16,8 @@ const nomesOrigem: Record<string, string> = {
   manual: "Manual", importacao: "Importado", conciliacao: "Conciliação", emprestimo: "Empréstimo",
 };
 
-export function HistoricoMovimentacoes({ formaPagamento, contas, categorias }: {
-  formaPagamento: FormaPagamento; contas: Conta[]; categorias: Categoria[];
+export function HistoricoMovimentacoes({ formaPagamento, contas, categorias, atualizado }: {
+  formaPagamento: FormaPagamento; contas: Conta[]; categorias: Categoria[]; atualizado?: () => void;
 }) {
   const periodo = intervaloMes();
   const [inicio, definirInicio] = useState(periodo.inicio);
@@ -60,6 +60,7 @@ export function HistoricoMovimentacoes({ formaPagamento, contas, categorias }: {
     if (data && data < inicio) definirInicio(data);
     if (data && data > fim) definirFim(data);
     pagina.recarregar();
+    atualizado?.();
   }
 
   async function classificar(transacao: Transacao, categoriaId: string) {
@@ -191,7 +192,7 @@ function FormularioCancelamento({ transacao, concluir }: { transacao: Transacao;
     try { await api(`financeiro/transacoes/${transacao.id}`, { method: "DELETE", body: JSON.stringify({ motivo }) }); concluir(); }
     catch (falha) { definirEstado({ erro: mensagemErro(falha), enviando: false }); }
   }
-  return <form className="formulario-grade" onSubmit={enviar}><Aviso tipo="info">O lançamento permanecerá no histórico como cancelado para auditoria.</Aviso>{estado.erro && <Aviso>{estado.erro}</Aviso>}
+  return <form className="formulario-grade" onSubmit={enviar}><Aviso tipo="info">{transacao.natureza === "compra_cartao" ? "O lançamento será removido do histórico e o valor será devolvido ao limite disponível do cartão. O registro será preservado no banco para auditoria." : "O lançamento permanecerá no histórico como cancelado para auditoria."}</Aviso>{estado.erro && <Aviso>{estado.erro}</Aviso>}
     <Campo rotulo="Motivo da exclusão" required minLength={5} maxLength={300} value={motivo} onChange={(e) => definirMotivo(e.target.value)} /><div className="modal-acoes"><Botao type="submit" variante="perigo" carregando={estado.enviando}><Trash2 size={17} /> Confirmar exclusão</Botao></div>
   </form>;
 }
