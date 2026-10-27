@@ -30,12 +30,12 @@ export default function Cartoes() {
 
   return <div>
     <CabecalhoPagina titulo="Cartões" descricao="Gerencie cartões, compras, limites e faturas em um só lugar."
-      acao={aba === "cartoes" ? <Botao onClick={() => definirModal("criar")}><Plus size={18} /> Novo cartão</Botao> : undefined} />
-    <div className="abas"><button className={aba === "cartoes" ? "ativa" : ""} onClick={() => definirAba("cartoes")}>Cartões e faturas</button><button className={aba === "historico" ? "ativa" : ""} onClick={() => definirAba("historico")}>Compras e histórico</button>{permiteRecorrentes && <button className={aba === "recorrentes" ? "ativa" : ""} onClick={() => definirAba("recorrentes")}>Pagamentos recorrentes</button>}</div>
+      acao={aba === "cartoes" ? <Botao data-tour="cartoes-adicionar" onClick={() => definirModal("criar")}><Plus size={18} /> Novo cartão</Botao> : undefined} />
+    <div className="abas" data-tour="cartoes-abas"><button data-tour="cartoes-aba-lista" className={aba === "cartoes" ? "ativa" : ""} onClick={() => definirAba("cartoes")}>Cartões e faturas</button><button data-tour="cartoes-aba-historico" className={aba === "historico" ? "ativa" : ""} onClick={() => definirAba("historico")}>Compras e histórico</button>{permiteRecorrentes && <button data-tour="cartoes-aba-recorrentes" className={aba === "recorrentes" ? "ativa" : ""} onClick={() => definirAba("recorrentes")}>Pagamentos recorrentes</button>}</div>
     {contas.erro && <Aviso>{contas.erro}</Aviso>}{categorias.erro && <Aviso>{categorias.erro}</Aviso>}
-    {aba === "historico" ? <HistoricoMovimentacoes formaPagamento="cartao_credito" contas={todasContas} categorias={categorias.dados?.dados ?? []} atualizado={contas.recarregar} />
+    <div data-tour={`cartoes-painel-${aba}`}>{aba === "historico" ? <HistoricoMovimentacoes formaPagamento="cartao_credito" contas={todasContas} categorias={categorias.dados?.dados ?? []} atualizado={contas.recarregar} />
       : aba === "recorrentes" && permiteRecorrentes ? <PagamentosRecorrentes formaPagamento="cartao_credito" contas={todasContas} categorias={categorias.dados?.dados ?? []} />
-      : <ListaCartoes cartoes={cartoes} carregando={contas.carregando} editar={(cartao) => abrir("editar", cartao)} faturas={(cartao) => abrir("faturas", cartao)} criar={() => definirModal("criar")} />}
+      : <ListaCartoes cartoes={cartoes} carregando={contas.carregando} editar={(cartao) => abrir("editar", cartao)} faturas={(cartao) => abrir("faturas", cartao)} criar={() => definirModal("criar")} />}</div>
     {modal === "criar" && <Modal titulo="Novo cartão" fechar={() => definirModal(null)}><FormularioCartao contas={todasContas} concluir={concluir} /></Modal>}
     {modal === "editar" && selecionado && <Modal titulo={`Editar ${selecionado.nome}`} fechar={() => definirModal(null)}><FormularioCartao cartao={selecionado} contas={todasContas} concluir={concluir} /></Modal>}
     {modal === "faturas" && selecionado && <Modal titulo={`Faturas de ${selecionado.nome}`} fechar={() => definirModal(null)} largo><PainelFaturas cartao={cartoes.find((cartao) => cartao.id === selecionado.id) ?? selecionado} contas={todasContas} atualizado={() => contas.recarregar()} /></Modal>}
@@ -78,7 +78,7 @@ function FormularioCartao({ contas, concluir, cartao }: { contas: Conta[]; concl
     catch (falha) { definirEstado({ erro: mensagemErro(falha), enviando: false }); }
   }
 
-  return <form className="formulario-grade" onSubmit={enviar}>{estado.erro && <Aviso>{estado.erro}</Aviso>}
+  return <form className="formulario-grade" data-tour="cartoes-formulario" onSubmit={enviar}>{estado.erro && <Aviso>{estado.erro}</Aviso>}
     <Campo rotulo="Nome do cartão" required minLength={2} maxLength={120} value={nome} onChange={(e) => definirNome(e.target.value)} />
     <div className="formulario-duas-colunas"><Campo rotulo="Moeda" required minLength={3} maxLength={3} disabled={Boolean(cartao)} value={moeda} onChange={(e) => { definirMoeda(e.target.value.toUpperCase()); definirContaPagamento(""); }} /><Campo rotulo="Instituição (opcional)" maxLength={120} value={instituicao} onChange={(e) => definirInstituicao(e.target.value)} /></div>
     <Seletor rotulo="Conta pagadora (opcional)" value={contaPagamento} onChange={(e) => definirContaPagamento(e.target.value)} dica="Você também poderá escolher ou trocar a conta ao pagar a fatura."><option value="">Sem conta vinculada</option>{contasCompativeis.map((conta) => <option key={conta.id} value={conta.id}>{conta.nome} · {conta.instituicao || "Sem instituição"}</option>)}</Seletor>

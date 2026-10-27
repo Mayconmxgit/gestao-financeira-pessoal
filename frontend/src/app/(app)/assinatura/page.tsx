@@ -34,15 +34,16 @@ export default function PaginaAssinatura() {
   return <div><CabecalhoPagina titulo="Assinatura" descricao="Consulte seu plano e escolha a modalidade adequada para sua rotina." />
     {(planos.erro || atual.erro || erro) && <Aviso>{planos.erro || atual.erro || erro}</Aviso>}
     {sucesso && <Aviso tipo="sucesso">{sucesso}</Aviso>}
-    {assinatura && <Cartao className="assinatura-atual"><div><span className="icone-cabecalho"><Crown size={22} /></span><div><span className="sobretitulo">PLANO ATUAL</span><h2>{assinatura.plano_nome}</h2><p>{formatarMoeda(assinatura.valor, assinatura.moeda)} / {assinatura.periodicidade}</p></div></div><div className="assinatura-atual-detalhes"><span className={`situacao situacao-${assinatura.situacao}`}>{rotuloSituacao(assinatura.situacao)}</span><small>Próxima cobrança: {formatarData(assinatura.proxima_cobranca_em)}</small><small>Acesso até: {formatarData(assinatura.periodo_acesso_fim)}</small></div></Cartao>}
-    <div className="planos-grade">{planos.dados?.dados.map((plano) => <Cartao key={plano.id} className="plano-cartao">
+    {assinatura && <Cartao className="assinatura-atual" data-tour="assinatura-atual"><div><span className="icone-cabecalho"><Crown size={22} /></span><div><span className="sobretitulo">PLANO ATUAL</span><h2>{assinatura.plano_nome}</h2><p>{formatarMoeda(assinatura.valor, assinatura.moeda)} / {assinatura.periodicidade}</p></div></div><div className="assinatura-atual-detalhes"><span className={`situacao situacao-${assinatura.situacao}`}>{rotuloSituacao(assinatura.situacao)}</span><small>Próxima cobrança: {formatarData(assinatura.proxima_cobranca_em)}</small><small>Acesso até: {formatarData(assinatura.periodo_acesso_fim)}</small></div></Cartao>}
+    {!assinatura && <Cartao className="assinatura-atual" data-tour="assinatura-atual" aria-busy={atual.carregando || undefined}><Vazio titulo={atual.carregando ? "Consultando sua assinatura" : "Nenhuma assinatura ativa"} descricao={atual.carregando ? "Aguarde enquanto verificamos os dados do seu plano." : "Escolha abaixo a modalidade adequada para sua rotina."} /></Cartao>}
+    <div className="planos-grade" data-tour="assinatura-planos">{planos.dados?.dados.map((plano) => <Cartao key={plano.id} className="plano-cartao">
       <div><span className="sobretitulo">{plano.periodicidade.toUpperCase()}</span><h2>{plano.nome}</h2><p>{plano.descricao}</p></div>
       <strong>{formatarMoeda(plano.valor, plano.moeda)}<small> / {plano.periodicidade === "mensal" ? "mês" : "ano"}</small></strong>
       <ul>{plano.recursos.map((recurso) => <li key={recurso}><Check size={16} />{recurso}</li>)}</ul>
       <Botao onClick={() => assinar(plano)} carregando={processando === plano.id} disabled={Boolean(bloqueiaNova)}>{Number(plano.valor) === 0 ? "Ativar plano grátis" : <>Assinar com Mercado Pago <ExternalLink size={16} /></>}</Botao>
     </Cartao>)}</div>
     {!planos.carregando && planos.dados?.dados.length === 0 && <Cartao><Vazio titulo="Nenhum plano disponível" descricao="Os planos serão exibidos aqui assim que forem publicados." /></Cartao>}
-    <p className="assinatura-nota">Os dados do cartão são informados diretamente ao provedor de pagamento e não são armazenados pela Vida Financeira.</p>
+    <p className="assinatura-nota" data-tour="assinatura-seguranca">Os dados do cartão são informados diretamente ao provedor de pagamento e não são armazenados pela Vida Financeira.</p>
   </div>;
 }
 

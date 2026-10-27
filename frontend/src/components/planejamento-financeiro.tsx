@@ -23,7 +23,7 @@ export function PagamentosRecorrentes({ formaPagamento, contas, categorias }: {
 
   return <>
     {lista.erro && <Aviso>{lista.erro}</Aviso>}
-    <Cartao><div className="cartao-cabecalho"><div><h2>Pagamentos recorrentes</h2><p>{formaPagamento === "cartao_credito" ? "Compras frequentes programadas neste cartão." : "Planeje gastos frequentes debitados das suas contas."}</p></div><Botao onClick={() => definirEditando(null)}><Plus size={17} /> Novo pagamento</Botao></div>
+    <Cartao><div className="cartao-cabecalho"><div><h2>Pagamentos recorrentes</h2><p>{formaPagamento === "cartao_credito" ? "Compras frequentes programadas neste cartão." : "Planeje gastos frequentes debitados das suas contas."}</p></div><Botao data-tour={formaPagamento === "cartao_credito" ? "cartoes-nova-recorrencia" : "movimentacoes-nova-recorrencia"} onClick={() => definirEditando(null)}><Plus size={17} /> Novo pagamento</Botao></div>
       {pagamentos.length ? <div className="planejamento-grade">{pagamentos.map((item) => <article className="planejamento-item" key={item.id}>
         <div className="planejamento-item-topo"><span className="planejamento-icone"><CalendarCheck size={20} /></span><div><strong>{item.descricao}</strong><small>{formasPagamento[item.forma_pagamento]} · {item.conta_nome} · {item.categoria_nome ?? "A classificar"}</small></div><span className={`etiqueta situacao-${item.situacao}`}>{situacoesRecorrencia[item.situacao]}</span></div>
         <div className="planejamento-valores"><strong>{formatarMoeda(item.valor, "BRL")}</strong><span>{periodicidades[item.periodicidade]}</span></div>
@@ -66,7 +66,7 @@ function FormularioRecorrencia({ formaPagamento, pagamento, contas, categorias, 
     } catch (falha) { definirEstado({ erro: mensagemErro(falha), enviando: false }); }
   }
 
-  return <form className="formulario-grade" onSubmit={enviar}><Aviso tipo="info">Valores previstos não alteram o saldo. O lançamento será criado na confirmação ou automaticamente no vencimento, quando essa opção estiver ativa no cartão.</Aviso>{estado.erro && <Aviso>{estado.erro}</Aviso>}
+  return <form className="formulario-grade" data-tour={formaPagamento === "cartao_credito" ? "cartoes-recorrencia-formulario" : "movimentacoes-recorrencia-formulario"} onSubmit={enviar}><Aviso tipo="info">Valores previstos não alteram o saldo. O lançamento será criado na confirmação ou automaticamente no vencimento, quando essa opção estiver ativa no cartão.</Aviso>{estado.erro && <Aviso>{estado.erro}</Aviso>}
     <Seletor rotulo={formaPagamento === "cartao_credito" ? "Cartão de crédito" : "Conta em reais"} required value={contaId} onChange={(e) => definirConta(e.target.value)}><option value="">Selecione</option>{contasCompativeis.map((conta) => <option key={conta.id} value={conta.id}>{conta.nome}</option>)}</Seletor>
     {formaPagamento === "cartao_credito" && <label className="opcao-saldo"><input type="checkbox" checked={cobrancaAutomatica} onChange={(e) => definirCobrancaAutomatica(e.target.checked)} /><span><strong>Cobrar automaticamente no vencimento</strong><small>Na data prevista, a compra será lançada no histórico do cartão e o próximo vencimento será calculado.</small></span></label>}
     <Campo rotulo="Descrição" required minLength={2} maxLength={500} value={descricao} onChange={(e) => definirDescricao(e.target.value)} placeholder="Ex.: Aluguel" />
@@ -100,7 +100,7 @@ export function MetasFinanceiras({ contas }: { contas: Conta[] }) {
 
   return <>
     {lista.erro && <Aviso>{lista.erro}</Aviso>}
-    <Cartao><div className="cartao-cabecalho"><div><h2>Metas financeiras</h2><p>Defina objetivos em reais e acompanhe seus aportes.</p></div><Botao onClick={() => definirEditando(null)}><Target size={17} /> Nova meta</Botao></div>
+    <Cartao><div className="cartao-cabecalho"><div><h2>Metas financeiras</h2><p>Defina objetivos em reais e acompanhe seus aportes.</p></div><Botao data-tour="metas-adicionar" onClick={() => definirEditando(null)}><Target size={17} /> Nova meta</Botao></div>
       {lista.dados?.dados.length ? <div className="planejamento-grade">{lista.dados.dados.map((meta) => <article className="planejamento-item" key={meta.id}>
         <div className="planejamento-item-topo"><span className="planejamento-icone"><PiggyBank size={20} /></span><div><strong>{meta.nome}</strong><small>{meta.prazo ? `Prazo: ${formatarData(meta.prazo)}` : "Sem prazo definido"}</small></div><span className={`etiqueta situacao-${meta.situacao}`}>{situacoesMeta[meta.situacao]}</span></div>
         <div className="meta-progresso"><div><strong>{formatarMoeda(meta.valor_acumulado, "BRL")}</strong><span>de {formatarMoeda(meta.valor_objetivo, "BRL")}</span><b>{Number(meta.percentual_concluido).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%</b></div><progress max="100" value={Math.min(Number(meta.percentual_concluido), 100)} /></div>
@@ -122,7 +122,7 @@ function FormularioMeta({ meta, concluir }: { meta?: MetaFinanceira; concluir: (
     try { await api(meta ? `financeiro/metas-financeiras/${meta.id}` : "financeiro/metas-financeiras", { method: meta ? "PATCH" : "POST", body: JSON.stringify({ nome, valor_objetivo: valor, prazo: prazo || null, ...(meta ? { situacao } : {}) }) }); concluir(); }
     catch (falha) { definirEstado({ erro: mensagemErro(falha), enviando: false }); }
   }
-  return <form className="formulario-grade" onSubmit={enviar}><Aviso tipo="info">A meta acompanha seu progresso, mas não movimenta o saldo das contas.</Aviso>{estado.erro && <Aviso>{estado.erro}</Aviso>}
+  return <form className="formulario-grade" data-tour="metas-formulario" onSubmit={enviar}><Aviso tipo="info">A meta acompanha seu progresso, mas não movimenta o saldo das contas.</Aviso>{estado.erro && <Aviso>{estado.erro}</Aviso>}
     <Campo rotulo="Nome da meta" required minLength={2} maxLength={120} value={nome} onChange={(e) => definirNome(e.target.value)} placeholder="Ex.: Reserva de emergência" />
     <div className="formulario-duas-colunas"><Campo rotulo="Valor desejado em reais" type="number" min="0.01" step="0.01" required value={valor} onChange={(e) => definirValor(e.target.value)} /><Campo rotulo="Prazo (opcional)" type="date" value={prazo} onChange={(e) => definirPrazo(e.target.value)} /></div>
     {meta && meta.situacao !== "concluida" && <Seletor rotulo="Situação" value={situacao} onChange={(e) => definirSituacao(e.target.value)}><option value="ativa">Ativa</option><option value="pausada">Pausada</option></Seletor>}

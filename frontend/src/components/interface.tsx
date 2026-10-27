@@ -2,7 +2,7 @@
 
 import { useId, useState } from "react";
 import { X, LoaderCircle, ArrowRight, Eye, EyeOff } from "lucide-react";
-import type { ButtonHTMLAttributes, InputHTMLAttributes, SelectHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, SelectHTMLAttributes } from "react";
 
 export function Botao({ variante = "primario", carregando, children, className = "", ...props }:
   ButtonHTMLAttributes<HTMLButtonElement> & { variante?: "primario" | "secundario" | "texto" | "perigo"; carregando?: boolean }) {
@@ -43,8 +43,8 @@ export function CabecalhoPagina({ titulo, descricao, acao }: { titulo: string; d
   return <div className="cabecalho-pagina"><div><h1>{titulo}</h1>{descricao && <p>{descricao}</p>}</div>{acao}</div>;
 }
 
-export function Cartao({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <section className={`cartao ${className}`}>{children}</section>;
+export function Cartao({ children, className = "", ...props }: HTMLAttributes<HTMLElement>) {
+  return <section {...props} className={`cartao ${className}`}>{children}</section>;
 }
 
 export function Vazio({ titulo, descricao, acao }: { titulo: string; descricao: string; acao?: { texto: string; href: string } }) {

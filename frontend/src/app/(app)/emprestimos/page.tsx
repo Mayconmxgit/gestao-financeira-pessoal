@@ -31,10 +31,10 @@ export default function Emprestimos() {
 
   return <div>
     <CabecalhoPagina titulo="Empréstimos" descricao="Acompanhe valores recebidos, parcelas, juros e saldo devedor."
-      acao={<Botao onClick={() => definirModal("criar")}><Plus size={18} /> Cadastrar empréstimo</Botao>} />
+      acao={<Botao data-tour="emprestimos-adicionar" onClick={() => definirModal("criar")}><Plus size={18} /> Cadastrar empréstimo</Botao>} />
     <div className="nota-informativa"><HandCoins size={21} /><p>O valor recebido aumenta o saldo da conta, mas não é receita. Somente juros e taxas pagos entram nas despesas.</p></div>
     {lista.erro && <Aviso>{lista.erro}</Aviso>}
-    {lista.dados?.dados.length ? <div className="grade-emprestimos">{lista.dados.dados.map((emprestimo) =>
+    {lista.dados?.dados.length ? <div className="grade-emprestimos" data-tour="emprestimos-lista">{lista.dados.dados.map((emprestimo) =>
       <Cartao key={emprestimo.id} className="cartao-emprestimo">
         <div className="emprestimo-topo"><span className="emprestimo-icone"><ReceiptText size={22} /></span>
           <span className={`etiqueta ${emprestimo.situacao_exibicao === "ativo" ? "etiqueta-verde" : ""}`}>{emprestimo.situacao_exibicao === "ativo" ? "Em andamento" : emprestimo.situacao_exibicao}</span></div>
@@ -47,7 +47,7 @@ export default function Emprestimos() {
           : <span>{emprestimo.parcelas_acompanhadas === 0 ? "Nenhuma parcela se aplica após o cadastro." : "Todas as parcelas aplicáveis foram pagas."}</span>}</div>
         <div className="acoes-cartao-emprestimo">{["ativo", "atrasado"].includes(emprestimo.situacao) && <Botao variante="texto" onClick={() => abrirEdicao(emprestimo.id)}><Pencil size={15} /> Editar</Botao>}<Botao variante="secundario" onClick={() => abrirDetalhes(emprestimo.id)}>Ver parcelas</Botao></div>
       </Cartao>)}</div> : !lista.carregando && <Cartao><Vazio titulo="Nenhum empréstimo cadastrado" descricao="Cadastre um valor recebido para gerar o cronograma e acompanhar a dívida." />
-      <Botao onClick={() => definirModal("criar")}><Plus size={17} /> Cadastrar empréstimo</Botao></Cartao>}
+      <Botao data-tour="emprestimos-adicionar" onClick={() => definirModal("criar")}><Plus size={17} /> Cadastrar empréstimo</Botao></Cartao>}
     {modal === "criar" && <Modal titulo="Cadastrar empréstimo" fechar={() => definirModal(null)} largo>
       <FormularioEmprestimo contas={contasValidas} concluir={concluirCadastro} />
     </Modal>}
@@ -103,7 +103,7 @@ function FormularioEmprestimo({ contas, concluir, emprestimo }: { contas: Conta[
   }
 
   if (!contas.length) return <Aviso tipo="info">Cadastre primeiro uma conta ativa que não seja cartão de crédito.</Aviso>;
-  return <form className="formulario-grade" onSubmit={enviar}>
+  return <form className="formulario-grade" data-tour="emprestimos-formulario" onSubmit={enviar}>
     {estado.erro && <Aviso>{estado.erro}</Aviso>}
     {cronogramaBloqueado && <Aviso tipo="info">Este contrato já possui pagamentos. Campos que mudariam o cronograma ficam bloqueados; valores oficiais de referência ainda podem ser corrigidos sem alterar as parcelas existentes.</Aviso>}
     <AjudaCamposEmprestimo />

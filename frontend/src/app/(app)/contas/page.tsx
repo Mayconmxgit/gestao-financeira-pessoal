@@ -30,11 +30,11 @@ export default function Contas() {
 
   return <div>
     <CabecalhoPagina titulo="Minhas contas" descricao="Organize suas contas bancárias e acompanhe o saldo gerencial."
-      acao={<Botao onClick={() => definirModal("criar")}><Plus size={18} /> Adicionar conta</Botao>} />
+      acao={<Botao data-tour="contas-adicionar" onClick={() => definirModal("criar")}><Plus size={18} /> Adicionar conta</Botao>} />
     {contas.erro && <Aviso>{contas.erro}</Aviso>}
     <div className="nota-informativa"><Landmark size={21} /><p><strong>Saldo gerencial</strong> é o valor inicial mais as movimentações confirmadas. Cartões de crédito são gerenciados na opção Cartões.</p></div>
     {moedas.length > 1 && <div className="filtros"><label>Moeda <select value={moeda} onChange={(e) => definirMoeda(e.target.value)}>{moedas.map((item) => <option key={item} value={item}>{item}</option>)}</select></label></div>}
-    {exibidas.length ? <div className="grade-contas">{exibidas.map((conta) => {
+    {exibidas.length ? <div className="grade-contas" data-tour="contas-lista">{exibidas.map((conta) => {
       const posicao = resumo.dados?.contas.find((linha) => linha.conta_id === conta.id);
       return <Cartao key={conta.id} className={`cartao-conta ${conta.situacao === "arquivada" ? "cartao-conta-arquivada" : ""}`}>
         <div className="conta-topo"><span className="conta-icone"><Wallet size={23} /></span><span className={`etiqueta ${conta.situacao === "ativa" ? "etiqueta-verde" : ""}`}>{conta.situacao === "ativa" ? "Ativa" : "Arquivada"}</span></div>
@@ -42,7 +42,7 @@ export default function Contas() {
         <div className="conta-saldo"><small>Saldo gerencial neste mês</small><strong>{resumo.carregando ? "—" : formatarMoeda(posicao?.saldo_final ?? conta.saldo_inicial, conta.moeda)}</strong></div>
         <div className="conta-rodape"><span>Saldo inicial: {formatarMoeda(conta.saldo_inicial, conta.moeda)}</span><div><button onClick={() => abrir("editar", conta)} className="link-acao">Editar <ArrowRight size={14} /></button>{conta.situacao === "ativa" && <button onClick={() => abrir("ajustar", conta)} className="link-acao">Ajustar <SlidersHorizontal size={14} /></button>}</div></div>
       </Cartao>;
-    })}</div> : !contas.carregando && <Cartao><Vazio titulo="Sua primeira conta começa aqui" descricao="Adicione uma conta e informe o saldo gerencial inicial." /><Botao onClick={() => definirModal("criar")}><Plus size={17} /> Adicionar conta</Botao></Cartao>}
+    })}</div> : !contas.carregando && <Cartao data-tour="contas-lista"><Vazio titulo="Sua primeira conta começa aqui" descricao="Adicione uma conta e informe o saldo gerencial inicial." /><Botao data-tour="contas-adicionar" onClick={() => definirModal("criar")}><Plus size={17} /> Adicionar conta</Botao></Cartao>}
     {modal === "criar" && <Modal titulo="Adicionar conta" fechar={() => definirModal(null)}><FormularioConta concluir={concluir} /></Modal>}
     {modal === "ajustar" && selecionada && <Modal titulo={`Ajustar ${selecionada.nome}`} fechar={() => definirModal(null)}><FormularioAjuste conta={selecionada} concluir={concluir} /></Modal>}
     {modal === "editar" && selecionada && <Modal titulo={`Editar ${selecionada.nome}`} fechar={() => definirModal(null)}><FormularioEdicao conta={selecionada} concluir={concluir} /></Modal>}
@@ -58,7 +58,7 @@ function FormularioConta({ concluir }: { concluir: () => void }) {
     try { await api("financeiro/contas", { method: "POST", body: JSON.stringify({ nome, tipo, moeda: moeda.toUpperCase(), saldo_inicial: saldo, instituicao: instituicao || null }) }); concluir(); }
     catch (falha) { definirEstado({ erro: mensagemErro(falha), enviando: false }); }
   }
-  return <form className="formulario-grade" onSubmit={enviar}>{estado.erro && <Aviso>{estado.erro}</Aviso>}
+  return <form className="formulario-grade" data-tour="contas-formulario" onSubmit={enviar}>{estado.erro && <Aviso>{estado.erro}</Aviso>}
     <Campo rotulo="Nome da conta" required minLength={2} maxLength={120} value={nome} onChange={(e) => definirNome(e.target.value)} />
     <Seletor rotulo="Tipo de conta" value={tipo} onChange={(e) => definirTipo(e.target.value)}>{tipos.map(([chave, rotulo]) => <option key={chave} value={chave}>{rotulo}</option>)}</Seletor>
     <Campo rotulo="Moeda" required minLength={3} maxLength={3} value={moeda} onChange={(e) => definirMoeda(e.target.value)} /><Campo rotulo="Saldo inicial" type="number" step="0.01" required value={saldo} onChange={(e) => definirSaldo(e.target.value)} />

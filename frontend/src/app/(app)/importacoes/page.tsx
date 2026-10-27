@@ -53,13 +53,13 @@ export default function Importacoes() {
   return <div>
     <CabecalhoPagina titulo="Importar extrato" descricao="Transforme seu extrato em uma visão financeira confiável, com revisão antes de confirmar." />
     {erro && <Aviso>{erro}</Aviso>}{sucesso && <Aviso tipo="sucesso">{sucesso}</Aviso>}
-    <div className="etapas-importacao"><span className="etapa ativa"><b>1</b> Enviar arquivo</span><span className={`etapa ${loteId ? "ativa" : ""}`}><b>2</b> Revisar prévia</span><span className="etapa"><b>3</b> Confirmar</span></div>
+    <div className="etapas-importacao" data-tour="importacoes-etapas"><span className="etapa ativa"><b>1</b> Enviar arquivo</span><span className={`etapa ${loteId ? "ativa" : ""}`}><b>2</b> Revisar prévia</span><span className="etapa"><b>3</b> Confirmar</span></div>
     {loteId ? <>
       {previa.erro && <Aviso>{previa.erro}</Aviso>}
       {previa.dados && <RevisaoLote previa={previa.dados} moeda={contas.dados?.dados.find((conta) => conta.id === previa.dados?.lote.conta_id)?.moeda ?? "BRL"} categorias={categorias.dados?.dados ?? []} recarregar={previa.recarregar} confirmado={confirmado} cancelar={cancelar} />}
       {previa.carregando && <Cartao><div className="carregando-conteudo">Preparando a prévia do extrato...</div></Cartao>}
     </> : <Cartao className="upload-cartao"><div className="cartao-cabecalho"><div><h2>Selecione seu extrato</h2><p>Você poderá revisar todos os lançamentos antes de alterar o saldo.</p></div><span className="icone-cabecalho"><FileUp size={22} /></span></div>
-      <form onSubmit={enviar} className="formulario-importacao">
+      <form onSubmit={enviar} className="formulario-importacao" data-tour="importacoes-formulario">
         <Seletor rotulo="Conta de destino" required value={contaId} onChange={(e) => definirContaId(e.target.value)}><option value="">Selecione uma conta</option>{contas.dados?.dados.filter((c) => c.situacao === "ativa").map((c) => <option key={c.id} value={c.id}>{c.nome} · {c.moeda}</option>)}</Seletor>
         <Campo rotulo="Instituição (opcional nesta etapa)" maxLength={120} placeholder="Ex.: Meu banco" value={instituicao} onChange={(e) => definirInstituicao(e.target.value)} />
         <label className={`area-upload ${arquivo ? "area-upload-selecionado" : ""}`}><input type="file" accept=".ofx,.csv,.pdf" onChange={(e) => definirArquivo(e.target.files?.[0] ?? null)} aria-label="Selecionar extrato OFX, CSV ou PDF do Itaú" />
@@ -67,7 +67,7 @@ export default function Importacoes() {
         <div className="upload-rodape"><span><Check size={17} /> Sem alterações até você confirmar</span><Botao type="submit" carregando={enviando}>Ver prévia <ArrowRight size={17} /></Botao></div>
       </form>
     </Cartao>}
-    <section className="secao-historico-importacoes"><div className="cartao-cabecalho"><div><h2>Histórico de importações</h2><p>Acompanhe lotes e reverta uma confirmação quando necessário.</p></div></div>
+    <section className="secao-historico-importacoes" data-tour="importacoes-historico"><div className="cartao-cabecalho"><div><h2>Histórico de importações</h2><p>Acompanhe lotes e reverta uma confirmação quando necessário.</p></div></div>
       {lotes.dados?.dados.length ? <div className="lista-lotes">{lotes.dados.dados.map((lote) => <Cartao key={lote.id} className="lote-cartao"><span className="lote-icone"><FileSpreadsheet size={22} /></span><div className="lote-info"><strong>{lote.nome_arquivo}</strong><span>{contas.dados?.dados.find((c) => c.id === lote.conta_id)?.nome ?? "Conta"} · {lote.instituicao || "Instituição não informada"}</span><small>{formatarData(lote.periodo_inicio)} — {formatarData(lote.periodo_fim)} · {lote.linhas_lidas} linhas</small></div><div className="lote-acoes"><span className={`etiqueta etiqueta-${lote.situacao}`}>{rotuloSituacao(lote.situacao)}</span>{lote.situacao === "previa" && <button className="link-acao" onClick={() => definirLoteId(lote.id)}>Revisar <ArrowRight size={15} /></button>}{lote.situacao === "confirmado" && <button className="link-acao" onClick={() => definirReverter(lote)}>Reverter <RotateCcw size={15} /></button>}</div></Cartao>)}</div>
         : !lotes.carregando && <Cartao><Vazio titulo="Nenhum extrato importado" descricao="Seus lotes aparecerão aqui depois do primeiro envio." /></Cartao>}
     </section>

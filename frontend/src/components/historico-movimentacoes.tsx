@@ -93,7 +93,7 @@ export function HistoricoMovimentacoes({ formaPagamento, contas, categorias, atu
       <label>Origem <select value={origem} onChange={(e) => definirOrigem(e.target.value)}><option value="">Todas</option>{Object.entries(nomesOrigem).map(([valor, nome]) => <option key={valor} value={valor}>{nome}</option>)}</select></label>
       <Botao type="button" variante="texto" onClick={limpar}><X size={16} /> Limpar filtros</Botao>
     </div>
-    <Cartao className="tabela-cartao"><div className="cartao-cabecalho"><div><h2>{formaPagamento === "cartao_credito" ? "Compras e histórico" : "Histórico"}</h2><p>{registros.length} {registros.length === 1 ? "movimentação carregada" : "movimentações carregadas"}</p></div><Botao onClick={() => abrir("lancamento")}><Plus size={17} /> {formaPagamento === "cartao_credito" ? "Nova compra" : "Novo lançamento"}</Botao></div>
+    <Cartao className="tabela-cartao"><div className="cartao-cabecalho"><div><h2>{formaPagamento === "cartao_credito" ? "Compras e histórico" : "Histórico"}</h2><p>{registros.length} {registros.length === 1 ? "movimentação carregada" : "movimentações carregadas"}</p></div><Botao data-tour={formaPagamento === "cartao_credito" ? "cartoes-nova-compra" : "movimentacoes-novo-lancamento"} onClick={() => abrir("lancamento")}><Plus size={17} /> {formaPagamento === "cartao_credito" ? "Nova compra" : "Novo lançamento"}</Botao></div>
       {registros.length ? <Tabela registros={registros} contas={contas} categorias={categorias} formaPagamento={formaPagamento} classificar={classificar} abrir={abrir} />
         : !pagina.carregando && <Vazio titulo="Nenhum lançamento neste período" descricao={formaPagamento === "cartao_credito" ? "Registre uma compra para iniciar o histórico do cartão." : "Importe um extrato ou adicione uma movimentação manual."} />}
       {proximo && <div className="carregar-mais"><Botao variante="secundario" onClick={carregarMais} carregando={carregandoMais}>Carregar mais <ChevronDown size={17} /></Botao></div>}
@@ -158,7 +158,7 @@ function FormularioMovimentacao({ formaPagamento, transacao, contas, categorias,
     } catch (falha) { definirEstado({ erro: mensagemErro(falha), enviando: false }); }
   }
 
-  return <form onSubmit={enviar} className="formulario-grade">{estado.erro && <Aviso>{estado.erro}</Aviso>}
+  return <form onSubmit={enviar} className="formulario-grade" data-tour={formaPagamento === "cartao_credito" ? "cartoes-compra-formulario" : "movimentacoes-formulario"}>{estado.erro && <Aviso>{estado.erro}</Aviso>}
     <Seletor rotulo={formaPagamento === "cartao_credito" ? "Cartão de crédito" : "Conta"} required disabled={Boolean(transacao && transacao.origem !== "manual")} value={contaId} onChange={(e) => { definirContaId(e.target.value); definirCategoriaId(""); }}><option value="">Selecione</option>{compativeis.map((conta) => <option key={conta.id} value={conta.id}>{conta.nome}</option>)}</Seletor>
     {formaPagamento === "cartao_credito" ? <Seletor rotulo="Parcelamento" value={parcelas} disabled={Boolean(transacao)} onChange={(e) => definirParcelas(e.target.value)}>{Array.from({ length: 60 }, (_, indice) => indice + 1).map((quantidade) => <option key={quantidade} value={quantidade}>{quantidade === 1 ? "À vista" : `${quantidade} parcelas`}</option>)}</Seletor>
       : <Seletor rotulo="Tipo" value={natureza} onChange={(e) => { definirNatureza(e.target.value); definirCategoriaId(""); }}><option value="saida">Saída</option><option value="entrada">Entrada</option></Seletor>}

@@ -32,11 +32,11 @@ export default function Relatorios() {
   return <div className="pagina-relatorios">
     <CabecalhoPagina titulo="Relatórios financeiros" descricao="Acompanhe a evolução dos gastos por categoria, conta e cartão."
       acao={<div className="cabecalho-acoes"><Botao type="button" variante="secundario" onClick={() => definirValoresOcultos((atual) => !atual)}>{valoresOcultos ? <Eye size={17} /> : <EyeOff size={17} />}{valoresOcultos ? "Mostrar valores" : "Ocultar valores"}</Botao></div>} />
-    <div className="abas relatorios-abas" role="tablist" aria-label="Modo do relatório">
-      <button type="button" role="tab" aria-selected={modo === "evolucao"} className={modo === "evolucao" ? "ativa" : ""} onClick={() => definirModo("evolucao")}>Evolução</button>
-      <button type="button" role="tab" aria-selected={modo === "comparacao"} className={modo === "comparacao" ? "ativa" : ""} onClick={() => definirModo("comparacao")}>Comparar meses</button>
+    <div className="abas relatorios-abas" data-tour="relatorios-modos" role="tablist" aria-label="Modo do relatório">
+      <button data-tour="relatorios-evolucao" type="button" role="tab" aria-selected={modo === "evolucao"} className={modo === "evolucao" ? "ativa" : ""} onClick={() => definirModo("evolucao")}>Evolução</button>
+      <button data-tour="relatorios-comparacao" type="button" role="tab" aria-selected={modo === "comparacao"} className={modo === "comparacao" ? "ativa" : ""} onClick={() => definirModo("comparacao")}>Comparar meses</button>
     </div>
-    <Cartao className="relatorios-filtros">
+    <Cartao className="relatorios-filtros" data-tour="relatorios-filtros">
       <div className="filtros">
         {moedas.length > 1 && <label><span>Moeda</span><select value={moeda} onChange={(evento) => definirMoeda(evento.target.value)}>{moedas.map((item) => <option key={item}>{item}</option>)}</select></label>}
         {modo === "evolucao" ? <>
@@ -74,7 +74,7 @@ function PainelEvolucao({ relatorio, carregando, erro, moeda, valoresOcultos }: 
   const conta = contas.find((item) => item.conta_id === contaSelecionada);
   const cartao = cartoes.find((item) => item.conta_id === cartaoSelecionado);
 
-  return <div className="relatorios-conteudo">
+  return <div className="relatorios-conteudo" data-tour="relatorios-painel-evolucao">
     <div className="relatorios-metricas">
       <Metrica rotulo="Categorias com gastos" valor={String(categorias.length)} texto />
       <Metrica rotulo="Gastos sem categoria" valor={relatorio.nao_categorizado} moeda={moeda} oculto={valoresOcultos} />
@@ -114,7 +114,7 @@ function PainelComparacao({ relatorio, carregando, erro, moeda, valoresOcultos }
   const contas = relatorio.contas.map((item) => ({ nome: item.nome, valores: item.saidas }));
   const cartoes = relatorio.cartoes.map((item) => ({ nome: item.nome, valores: item.gastos }));
 
-  return <div className="relatorios-conteudo">
+  return <div className="relatorios-conteudo" data-tour="relatorios-painel-comparacao">
     <Cartao className="relatorio-secao">
       <TituloSecao titulo="Categorias" descricao="As cinco maiores categorias pela soma dos dois meses; a tabela mantém todas." />
       {categorias.length ? <><GraficoComparacao itens={categorias} moeda={moeda} oculto={valoresOcultos} rotuloA={rotuloA} rotuloB={rotuloB} ariaLabel="Comparação de gastos por categoria" /><TabelaComparacao itens={relatorio.categorias.map((item) => ({ nome: item.nome, valores: item }))} rotuloA={rotuloA} rotuloB={rotuloB} moeda={moeda} oculto={valoresOcultos} /></> : <Vazio titulo="Sem categorias para comparar" descricao="Não há gastos categorizados nos meses selecionados." />}
