@@ -1,0 +1,106 @@
+name: vida-financeira
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE:-vida_financeira}
+      MYSQL_USER: ${DB_USERNAME:-vida_financeira_app}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?Defina DB_PASSWORD em .env.docker}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Defina MYSQL_ROOT_PASSWORD em .env.docker}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "127.0.0.1:${MYSQL_HOST_PORT:-3307}:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    networks:
+      - privada
+
+  migrate:
+    build:
+      context: ./backend
+    env_file: .env.docker
+    environment: &backend_environment
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_URL: http://localhost:${FRONTEND_PORT:-3000}
+      FRONTEND_ORIGEM: http://localhost:${FRONTEND_PORT:-3000}
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+      CACHE_STORE: database
+      QUEUE_CONNECTION: database
+    command: ["php", "artisan", "migrate", "--force", "--no-interaction"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - privada
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file: .env.docker
+    environment: *backend_environment
+    command: ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000", "--no-interaction"]
+    volumes:
+      - backend_storage:/var/www/html/storage/app
+    ports:
+      - "127.0.0.1:${BACKEND_HOST_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "php -r 'exit(@file_get_contents(\"http://127.0.0.1:8000/up\") === false ? 1 : 0);'"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    networks:
+      - privada
+
+  scheduler:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file: .env.docker
+    environment: *backend_environment
+    command: ["php", "artisan", "schedule:work", "--no-interaction"]
+    volumes:
+      - backend_storage:/var/www/html/storage/app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - privada
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      BACKEND_URL: http://backend:8000
+      APP_ORIGIN: http://localhost:${FRONTEND_PORT:-3000}
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - privada
+
+volumes:
+  mysql_data:
+  backend_storage:
+
+networks:
+  privada:
+    driver: bridge

@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.docker.example
 
 # Dependencias e artefatos gerados
 node_modules/

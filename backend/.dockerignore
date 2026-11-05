@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+vendor
+node_modules
+.git
+storage/app/*
+!storage/app/.gitignore
+!storage/app/private
+storage/logs/*
+bootstrap/cache/*
